@@ -1,0 +1,142 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  --background: #0e0f12;
+  --foreground: #ececef;
+  --card: #16181d;
+  --muted: #1b1d23;
+  --muted-foreground: #8d909b;
+  --border: rgba(255, 255, 255, 0.08);
+  --accent: #a78bfa;
+  --accent-foreground: #f5f3ff;
+  --blue: #6ea8fe;
+  --orange: #f0a05a;
+  --danger: #f0a3a8;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(167, 139, 250, 0.35);
+}
+
+.forma-canvas {
+  --tl-color-background: #101114;
+  --tl-color-grid: hsl(240, 5%, 28%);
+  --tl-color-selection-stroke: #a78bfa;
+  --tl-color-selection-fill: rgba(167, 139, 250, 0.16);
+  background: #101114;
+}
+
+.forma-canvas .tl-watermark_SEE-LICENSE {
+  opacity: 0.55;
+}
+
+.forma-block {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #1a1c22;
+  color: #ececef;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+}
+
+.forma-block-accent {
+  width: 3px;
+  flex: none;
+}
+
+.forma-block-body {
+  min-width: 0;
+  flex: 1;
+  padding: 12px 12px 28px;
+}
+
+.forma-block-kicker {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.forma-block-title {
+  margin-top: 6px;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.forma-block-copy {
+  display: -webkit-box;
+  margin-top: 6px;
+  overflow: hidden;
+  color: #a1a4b0;
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.forma-block-explore {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(167, 139, 250, 0.14);
+  color: #d8ccff;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 3px 8px;
+  pointer-events: auto !important;
+}
+
+.forma-block-explore:hover {
+  background: rgba(167, 139, 250, 0.24);
+}
+
+.forma-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
