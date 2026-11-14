@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { canvasSnapshotSchema } from "@/lib/ai/schemas";
 import { getCurrentUser } from "@/lib/auth";
-import { deployTemplateFor } from "@/lib/deploy/contract";
 import { serviceNameFor } from "@/lib/deploy/names";
 import { enqueueJob, latestJobForProject, listEvents } from "@/lib/deploy/queue";
 import { getWebDeployDb } from "@/lib/deploy/web";
@@ -37,18 +36,10 @@ export async function POST(request: Request) {
   const project = getProject(parsed.data.projectId);
   if (!project) return Response.json({ error: "This workspace no longer exists." }, { status: 404 });
 
-  const template = deployTemplateFor(project.template);
-  if (!template) {
-    return Response.json(
-      { error: "Only the SlotGuard demo can be deployed so far. Other workspaces need the app builder, which is not ready." },
-      { status: 422 },
-    );
-  }
-
   const { job, created } = enqueueJob(getWebDeployDb(), {
     projectId: project.id,
     requestedBy: user.id,
-    template,
+    template: project.template,
     serviceName: serviceNameFor(project.id),
     snapshot: parsed.data.canvas,
     goal: project.goal,

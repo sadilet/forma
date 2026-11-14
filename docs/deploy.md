@@ -1,8 +1,8 @@
 # Deploy: turning a canvas into a running service
 
-The deploy module takes a project's canvas, builds a build plan, assembles the app and ships it to Google Cloud Run. The result is a public address like `https://forma-project-slotguard-….europe-north1.run.app`.
+The deploy module takes a project's canvas, builds a build plan, has a model write the app, checks that it runs, and ships it to Google Cloud Run. The result is a public address like `https://forma-project-slotguard-….europe-north1.run.app`.
 
-Right now only the **SlotGuard** demo can be deployed: it has a ready-made reference app. Building from the plan with a model (an agent) is not wired in yet, but the place for it is ready; see "What's next".
+**Any workspace can be deployed**, SlotGuard included. Edit the canvas and press Deploy again: the app is updated to match, and the address stays the same.
 
 ## How it works
 
@@ -11,16 +11,54 @@ Deploy button in the workspace
   → POST /api/deploy        (the canvas goes to the server, the job is queued in SQLite)
   → a worker picks up the job   (separate process: npm run deploy:worker)
       1. plan    canvas JSON → ordered task list (src/lib/deploy/planner.ts)
-      2. build   app folder in data/deploy/<project>/repo, one git commit per deploy
+      2. build   the app builder writes the app and checks it (see below), then the folder
+                 data/deploy/<project>/repo gets one git commit per deploy
       3. ship    gcloud run deploy --source …  (Cloud Build builds the image, Cloud Run runs it)
       4. verify  poll <url>/api/health, up to 8 attempts
   → the Deploy panel in the UI shows the steps, the log and the URL
 ```
 
+## The app builder
+
+The `build` step asks a model (Gemini or OpenAI, the same keys as the rest of Forma) to write the app from the canvas. The model does not write a server from scratch: Forma provides a small runtime (`deploy-templates/runtime/`: HTTP server, in-memory SQLite, helpers, `/api/health`, Dockerfile) and the model writes only the app on top of it, in `app/*.mjs` and `public/*`. The contract between the two is the system prompt in `src/lib/deploy/prompt.ts` and `kit.mjs`; change them together.
+
+What the model is given: the product goal, every block and arrow of the canvas, the decisions that bind each block, and the open questions. Open decisions get a sensible default that is listed on the app's `/about` page. Payments, email and SMS are simulated; there is no real login.
+
+**Nothing is shipped before it is checked.** After each answer Forma:
+
+1. applies the rules: allowed paths and sizes, no packages, no network calls, no `eval`, no imports of anything but a few `node:` built-ins;
+2. starts the app and opens `/`, `/about`, every page the app lists in its `smoke` list and every plain GET route. Any answer of 500, or a 404 on a required page, is a problem;
+3. sends the problems back to the model, up to two times, and only then fails the deploy with the problems in the message.
+
+The app is started in a separate Node process with the permission model: it can read its own folder and nothing else. It cannot write files, start programs or open sockets, and it gets an empty environment, so it never sees your API keys.
+
+**Updates follow the canvas.** The release that last passed its check is kept in `data/deploy/<project>/repo`, together with the canvas it was built from. On the next deploy Forma compares the canvases (blocks, text, arrows and the goal; moving a block is not a change) and:
+
+| Canvas | What happens |
+| --- | --- |
+| first deploy | the model writes the whole app |
+| changed | the model gets the list of changes and the current files and edits only what it must; the rest of the app and its demo data stay as they were |
+| not changed | the same files are checked and shipped again, the model is not called |
+
+A failed build never touches the last good release. To start over from a clean slate, delete `data/deploy/<project>/` (the next deploy writes a new app from scratch).
+
+A build takes one to three minutes of model time on top of the first Cloud Build. The log in the Deploy panel shows every step.
+
+## Saving projects to git
+
+Without this, a project's code lives only in `data/deploy/<project>/repo` on the machine that ran the worker. Set `DEPLOY_GIT_REMOTE` (and, for an SSH address, `DEPLOY_GIT_SSH_KEY`) in `.env.deploy` and the worker keeps the repo in step with a shared remote:
+
+- **After each build**, the new release is pushed to the branch named after the project (`project-slotguard`). One remote repository holds all projects. A push is never forced, and a failed push is a warning in the log: the deploy goes on.
+- **Before each build**, the worker fetches that branch. On a new machine, or after `data/deploy/` was deleted, it restores the project from there, so the next deploy is an update of the last release instead of a new app. If another machine deployed in between, the worker moves forward to that release first. If both sides have releases the other lacks, the worker keeps its own copy and says so in the log, and its push is refused rather than overwriting the remote.
+- Each branch holds the app, `.forma/SNAPSHOT.json` (the canvas it was built from), `.forma/PLAN.json` and `.forma/RELEASE.json`. **If the remote is public, so is the canvas text.** Use a private repository for real projects.
+- Any git host works. For GitHub, add the public key as a deploy key with write access (or use your own key). By default the project uses the shared demo key `example_github_ssh` from the project root, which is **committed to the repository on purpose**: anyone with access to this repository can push to `sadilet/forma-examples`. That is fine for a demo repo and not for anything else. For real projects, point `DEPLOY_GIT_SSH_KEY` at your own key outside the project folder. The worker runs `chmod 600` on the key itself, because ssh refuses a key other users can read.
+
+## Rules of the pipeline
+
 - A project has at most one deploy running at a time. Clicking again while a deploy is in progress returns the current one.
 - If the worker dies, the job returns to the queue after a minute and runs again (at most two attempts).
 - If the worker is stopped with Ctrl+C, the current deploy goes back to the queue without losing an attempt.
-- The service runs with `--max-instances 1`: the reference app's SQLite lives inside the container and is recreated with demo data on every start.
+- The service runs with `--max-instances 1`: the app's SQLite lives in memory inside the container and is recreated with demo data on every start.
 
 ## Setup for a cofounder
 
@@ -83,9 +121,13 @@ npm run dev              # the app
 npm run deploy:worker    # the worker: without it jobs stay in the queue
 ```
 
-Open the SlotGuard workspace; the **Deploy** button is at the top right. The first build takes a few minutes, later ones about a minute.
+Open a workspace; the **Deploy** button is at the top right. The first deploy takes a few minutes, later ones about a minute plus the model's time.
 
-To check the whole pipeline without Google, set `DEPLOY_DRY_RUN=1` in `.env.deploy`: the plan and the app folder are created, the cloud is not called.
+The worker needs an AI key to write apps: `GEMINI_API_KEY` or `OPENAI_API_KEY` in `.env.local` (it reads the same file as the app). The worker prints which builder it will use when it starts.
+
+To check the whole pipeline without Google Cloud, set `DEPLOY_DRY_RUN=1` in `.env.deploy`: the plan is made, the model writes the app, the app is checked and the folder is created, but the cloud is not called. The model is still called, so it uses a little of your AI quota.
+
+`DEPLOY_BUILDER` chooses who writes the app: `auto` (default: the model when there is a key, otherwise the ready-made SlotGuard), `agent` (always the model) or `reference` (always the ready-made SlotGuard, with no AI calls and no canvas edits; handy as a safety net before a live demo).
 
 ## What lives where, and how not to step on each other
 
@@ -93,11 +135,12 @@ The whole module lives in new folders. Existing code is touched minimally:
 
 | Where | What |
 | --- | --- |
-| `src/lib/deploy/` | all the logic: plan, queue, worker, `gcloud`, app folder build |
+| `src/lib/deploy/` | all the logic: plan, queue, worker, app builder, `gcloud`, app folder build |
 | `src/app/api/deploy/route.ts` | `POST` queues a deploy, `GET` returns status and log |
 | `src/components/deploy/deploy-dock.tsx` | the button and the panel |
 | `scripts/deploy-worker.ts` | worker entry point |
-| `deploy-templates/slotguard/` | the SlotGuard reference app and its Dockerfile |
+| `deploy-templates/runtime/` | the runtime every generated app runs on (server, helpers, check, Dockerfile) |
+| `deploy-templates/slotguard/` | the ready-made SlotGuard app, a fallback for `DEPLOY_BUILDER=reference` |
 | `data/deploy/` | built project repositories (in `.gitignore`) |
 
 Points where it touches the rest of the code:
@@ -120,13 +163,16 @@ Tests: `npm run test:deploy`.
 | `PERMISSION_DENIED` or "API not enabled" | an API is not enabled or you lack rights in the project, see steps 2–3 |
 | The deploy succeeded but the address answers 403 | `DEPLOY_PUBLIC_ACCESS=no-invoker-iam-check` |
 | "Build failed" | the log contains a Cloud Build link with the full build journal |
-| `/api/deploy` answers 422 "Only the SlotGuard demo…" | the project is not SlotGuard, or the dev server has been running for a long time and holds stale code: restart `npm run dev` |
+| "The app builder needs an AI key" | add `GEMINI_API_KEY` (or `OPENAI_API_KEY`) to `.env.local` and restart the worker |
+| "The app builder … failed: 429 …" or "503" | the model is busy or out of quota. Busy answers are retried twice on their own; otherwise wait and deploy again, or set `DEPLOY_MODEL` |
+| "could not produce a working app after 3 tries" | the log lists what the check found. Deploy again (the model usually fixes it on a new run), or put the problem into the canvas text, or use `DEPLOY_BUILDER=reference` for SlotGuard |
+| The model's answer was cut off | raise `DEPLOY_MAX_OUTPUT_TOKENS` if your model allows it, or split the canvas into a smaller product |
 | `SqliteError: disk I/O error` | do not open `data/forma.db` with outside programs while the dev server is running: they can delete its `-wal`/`-shm` journal. Stop the server with Ctrl+C and start it again |
 
 ## What's next
 
-- **Agent build.** Right now the `build` step copies the ready-made app. An agent that writes the app from the plan in `planner.ts` plugs into `src/lib/deploy/build.ts`: it gets the same folder and must leave an app in it with a `Dockerfile` that listens on `$PORT` and answers on `/api/health`.
 - **Rollback.** Cloud Run keeps revisions; a rollback is switching traffic to the previous one. Each deploy's revision is recorded in `deploy_jobs.revision`.
-- **Entire.** The project repository already lives in `data/deploy/<project>/repo` with a commit per deploy. Pushing to Entire is an optional step after the build and does not affect the deploy.
-- **Owner login.** In the reference SlotGuard the dashboard is open without a login; this is a demo. Deposit payment is mocked: no money is charged.
+- **Entire.** The remote can be any git host; Entire should work the same way if it gives you a git address, but that has not been tried.
+- **Real services.** Generated apps keep their data in memory and simulate payments, email and SMS. A real database, real providers and owner login are separate steps that need secrets and a persistent store.
+- **Owner login.** The generated apps have no login: owner and admin areas are open. This is a demo.
 - **Cost.** With `DEPLOY_MIN_INSTANCES=0` the service costs nothing while idle, but the first visit after a pause waits 5–10 seconds. Before a demo you can set it to `1`.

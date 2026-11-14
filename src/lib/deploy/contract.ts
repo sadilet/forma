@@ -8,9 +8,17 @@ export type DeployStage = (typeof DEPLOY_STAGES)[number];
 export type DeployStatus = "queued" | "running" | "succeeded" | "failed";
 export type EventLevel = "info" | "warn" | "error";
 
-// Reference apps we can ship today. Each one is a folder in deploy-templates/.
-export const DEPLOY_TEMPLATES = ["slotguard"] as const;
-export type DeployTemplate = (typeof DEPLOY_TEMPLATES)[number];
+// The project template a deploy was started from (blank, taskflow, meetings, slotguard, ...).
+// Any project can be deployed: the app builder writes the app from the canvas.
+export type DeployTemplate = string;
+
+// Ready-made apps that can be shipped without the app builder. Each one is a folder in deploy-templates/.
+// They are a fallback for a machine with no AI key (DEPLOY_BUILDER=reference); they do not follow canvas edits.
+export const REFERENCE_TEMPLATES = ["slotguard"] as const;
+
+export function hasReferenceApp(template: string): boolean {
+  return (REFERENCE_TEMPLATES as readonly string[]).includes(template);
+}
 
 export type DeployJob = {
   id: string;
@@ -67,7 +75,3 @@ export const HEARTBEAT_MS = 10_000;
 export const STALE_LOCK_MS = 60_000;
 // A job that crashed its worker is retried once more, then marked failed.
 export const MAX_ATTEMPTS = 2;
-
-export function deployTemplateFor(projectTemplate: string): DeployTemplate | null {
-  return projectTemplate === "slotguard" ? "slotguard" : null;
-}

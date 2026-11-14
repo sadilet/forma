@@ -30,6 +30,8 @@ function setup(concurrency: number) {
       GCP_PROJECT_ID: "junction26hel-7607",
       DEPLOY_WORK_DIR: fs.mkdtempSync(path.join(tmp, "work-")),
       DEPLOY_WORKER_CONCURRENCY: String(concurrency),
+      // These tests are about the queue. Never let them reach a real model.
+      DEPLOY_BUILDER: "reference",
     },
     process.cwd(),
   );

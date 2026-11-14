@@ -1,10 +1,17 @@
+import fs from "node:fs";
 import type Database from "better-sqlite3";
-import { prepareRepo } from "./build.ts";
+import { prepareRepo, readBaseApp, repoDirFor, runtimeDirFor, scratchDirFor } from "./build.ts";
 import type { DeployConfig } from "./config.ts";
+import { hasReferenceApp } from "./contract.ts";
 import type { DeployStage, EventLevel } from "./contract.ts";
+import { generateApp } from "./generator.ts";
+import type { GeneratedApp } from "./generator.ts";
 import { deployFromSource } from "./gcloud.ts";
 import type { Shipped } from "./gcloud.ts";
+import { AI_SETUP_HINT, loadLlm } from "./llm.ts";
+import type { Llm } from "./llm.ts";
 import { planFromSnapshot } from "./planner.ts";
+import { publishRelease, syncFromRemote } from "./publish.ts";
 import type { RunOptions } from "./process.ts";
 import {
   addEvent,
@@ -28,10 +35,13 @@ export type PipelineDeps = {
   // True when the service answers /api/health with 200.
   health: (url: string, signal: AbortSignal) => Promise<boolean>;
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
+  // The model that writes the app, or null when no AI key is configured.
+  llm?: () => Llm | null;
 };
 
 export const realDeps: PipelineDeps = {
   ship: deployFromSource,
+  llm: () => loadLlm(),
   health: async (url, signal) => {
     try {
       const response = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]) });
@@ -64,6 +74,27 @@ const MAX_FORWARDED_LINES = 300;
 const MAX_WARNINGS = 8;
 
 class Stopped extends Error {}
+
+type Builder = { kind: "agent"; llm: Llm } | { kind: "reference"; note: string | null };
+
+// Decides who writes the app: the model, or the ready-made reference app.
+function chooseBuilder(config: DeployConfig, template: string, llm: Llm | null): Builder {
+  const reference = hasReferenceApp(template);
+  if (config.builder === "reference") {
+    if (!reference) {
+      throw new Error('This workspace has no ready-made app, so DEPLOY_BUILDER=reference cannot deploy it. Set DEPLOY_BUILDER=auto or agent.');
+    }
+    return { kind: "reference", note: null };
+  }
+  if (llm) return { kind: "agent", llm };
+  if (config.builder === "agent" || !reference) {
+    throw new Error(`The app builder needs an AI key to write the app from the canvas. ${AI_SETUP_HINT}`);
+  }
+  return {
+    kind: "reference",
+    note: `No AI key is set, so the ready-made ${template} app is shipped as it is. Changes on the canvas are NOT applied. ${AI_SETUP_HINT}`,
+  };
+}
 
 export async function runJob(args: {
   db: Database.Database;
@@ -100,17 +131,51 @@ export async function runJob(args: {
 
     // 2. Build
     enter("build");
+    // Start from what the shared remote holds for this project, if one is set up. This is what lets a
+    // new machine (or a cleared data/deploy) carry on from the last release instead of starting over.
+    await syncFromRemote({ config, repoDir: repoDirFor(config, job.projectId), projectId: job.projectId, signal, log: (level, message) => log(level, message) });
+    if (signal.aborted) throw new Stopped("stopped");
+    const builder = chooseBuilder(config, job.template, (deps.llm ?? realDeps.llm!)());
+    let app: GeneratedApp | undefined;
+    if (builder.kind === "agent") {
+      const scratchDir = scratchDirFor(config, job.projectId);
+      try {
+        app = await generateApp({
+          llm: builder.llm,
+          kitDir: runtimeDirFor(config),
+          scratchDir,
+          goal: job.goal,
+          snapshot: job.snapshot,
+          plan,
+          base: readBaseApp(repoDirFor(config, job.projectId)),
+          signal,
+          log: (level, message) => log(level, message),
+        });
+      } finally {
+        fs.rmSync(scratchDir, { recursive: true, force: true });
+      }
+    } else if (builder.note) {
+      log("warn", builder.note);
+    }
+    if (signal.aborted) throw new Stopped("stopped");
     const repo = await prepareRepo({
       config,
       projectId: job.projectId,
       jobId: job.id,
       template: job.template,
       snapshot: job.snapshot,
+      goal: job.goal,
       plan,
+      app,
+      model: builder.kind === "agent" ? builder.llm.model : undefined,
       signal,
       log: (level, message) => log(level, message),
     });
     if (signal.aborted) throw new Stopped("stopped");
+    if (repo.commit) {
+      await publishRelease({ config, repoDir: repo.repoDir, projectId: job.projectId, signal, log: (level, message) => log(level, message) });
+      if (signal.aborted) throw new Stopped("stopped");
+    }
 
     // 3. Ship
     enter("ship");

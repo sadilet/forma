@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import type { Editor } from "tldraw";
 import { Button } from "@/components/ui";
 import { extractCanvas } from "@/lib/canvas/extract";
-import { DEPLOY_STAGES, deployTemplateFor } from "@/lib/deploy/contract";
+import { DEPLOY_STAGES } from "@/lib/deploy/contract";
 import type { DeployEvent, DeployJob, DeployStage } from "@/lib/deploy/contract";
 import type { ProjectRecord } from "@/lib/projects";
 
@@ -23,7 +23,6 @@ const STEPS: { stage: DeployStage; label: string }[] = [
 const isActive = (job: DeployJob | null) => job?.status === "queued" || job?.status === "running";
 
 export function DeployDock({ project, editor }: { project: ProjectRecord; editor: Editor | null }) {
-  if (!deployTemplateFor(project.template)) return null;
   return <DeployPanel project={project} editor={editor} />;
 }
 
@@ -114,7 +113,7 @@ function DeployPanel({ project, editor }: { project: ProjectRecord; editor: Edit
             <div>
               <h2 className="text-sm font-semibold">Deploy {project.name}</h2>
               <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                Builds the app from this canvas and puts it online on Google Cloud Run.
+                Writes the app from this canvas and puts it online on Google Cloud Run. Edit the canvas and deploy again to update it.
               </p>
             </div>
             <Button variant="ghost" size="icon" aria-label="Close" onClick={() => setOpen(false)}>

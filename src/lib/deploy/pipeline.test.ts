@@ -12,6 +12,7 @@ import { ensureDeployTables } from "./db.ts";
 import { runJob } from "./pipeline.ts";
 import type { PipelineDeps } from "./pipeline.ts";
 import { claimJob, enqueueJob, getJob, getPlan, listEvents } from "./queue.ts";
+import { answerOf, appFiles, fakeLlm, indexSource } from "./test-app.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forma-deploy-test-"));
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -33,17 +34,17 @@ function setup(env: Record<string, string> = {}) {
   const db = new Database(":memory:");
   ensureDeployTables(db);
   const workDir = fs.mkdtempSync(path.join(tmp, "work-"));
-  const config = loadConfig({ GCP_PROJECT_ID: "junction26hel-7607", DEPLOY_WORK_DIR: workDir, ...env }, process.cwd());
+  const config = loadConfig({ GCP_PROJECT_ID: "junction26hel-7607", DEPLOY_WORK_DIR: workDir, DEPLOY_BUILDER: "reference", ...env }, process.cwd());
   return { db, config, workDir };
 }
 
-function queueJob(db: Database.Database, projectId = "project-slotguard") {
+function queueJob(db: Database.Database, projectId = "project-slotguard", template = "slotguard", canvas: CanvasSnapshot = snapshot) {
   enqueueJob(db, {
     projectId,
     requestedBy: "user-alex",
-    template: "slotguard",
+    template,
     serviceName: `forma-${projectId}`,
-    snapshot,
+    snapshot: canvas,
     goal: "SlotGuard cuts no-show losses.",
   });
   return claimJob(db, "w1")!;
@@ -53,6 +54,7 @@ const okDeps = (overrides: Partial<PipelineDeps> = {}): PipelineDeps => ({
   ship: async () => ({ url: "https://forma-project-slotguard-abc.europe-north1.run.app", revision: "forma-project-slotguard-00001-abc" }),
   health: async () => true,
   sleep: async () => undefined,
+  llm: () => null,
   ...overrides,
 });
 
@@ -288,4 +290,132 @@ test("a project id can never point outside the work directory", () => {
     const dir = repoDirFor(config, id);
     assert.ok(dir.startsWith(path.resolve(workDir) + path.sep), `${id} -> ${dir}`);
   }
+});
+
+// ---- The app builder inside the pipeline ------------------------------------------------------------------------
+
+const run = (db: Database.Database, config: ReturnType<typeof setup>["config"], job: ReturnType<typeof queueJob>, deps: PipelineDeps) =>
+  runJob({ db, config, job, workerId: "w1", signal: new AbortController().signal, deps });
+
+test("the app builder writes the app, the repo records how, and no scratch files are left", async () => {
+  const { db, config } = setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "agent" });
+  const llm = fakeLlm([answerOf(appFiles("Studio"), "Booking pages.")]);
+  const job = queueJob(db, "project-taskflow", "taskflow");
+  const outcome = await run(db, config, job, okDeps({ llm: () => llm }));
+  assert.equal(outcome, "succeeded");
+  const repo = repoDirFor(config, "project-taskflow");
+  for (const file of ["Dockerfile", "kit.mjs", "server.mjs", "app/index.mjs", "public/style.css", ".forma/PLAN.json"]) {
+    assert.ok(fs.existsSync(path.join(repo, file)), `${file} is missing`);
+  }
+  const release = JSON.parse(fs.readFileSync(path.join(repo, ".forma", "RELEASE.json"), "utf8"));
+  assert.equal(release.builder, "agent");
+  assert.equal(release.model, "fake-model");
+  assert.equal(release.mode, "fresh");
+  assert.equal(release.summary, "Booking pages.");
+  assert.equal(release.goal, "SlotGuard cuts no-show losses.");
+  assert.equal(fs.existsSync(path.join(repo, "..", "scratch")), false);
+  const log = messages(db, job.id);
+  assert.ok(log.some((line) => /The check passed/.test(line)));
+  assert.ok(log.some((line) => line === "Builder: Booking pages."));
+});
+
+test("deploying again follows the canvas: unchanged is reused, changed is an update", async () => {
+  const { db, config } = setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "agent" });
+  const llm = fakeLlm([answerOf(appFiles("Studio"))]);
+  const deps = okDeps({ llm: () => llm });
+
+  assert.equal(await run(db, config, queueJob(db, "project-slotguard"), deps), "succeeded");
+  assert.equal(llm.calls.length, 1);
+
+  const second = queueJob(db, "project-slotguard");
+  assert.equal(await run(db, config, second, deps), "succeeded");
+  assert.equal(llm.calls.length, 1, "the same canvas does not ask the model again");
+  assert.ok(messages(db, second.id).some((line) => /has not changed/.test(line)));
+
+  const edited: CanvasSnapshot = structuredClone(snapshot);
+  edited.blocks[0].description = "Decided: 30% deposit, cutoff 48 hours.";
+  const third = queueJob(db, "project-slotguard", "slotguard", edited);
+  llm.complete = async (request) => {
+    llm.calls.push({ system: request.system, messages: structuredClone(request.messages) });
+    return { text: answerOf({ "app/index.mjs": indexSource("Studio 30") }, "Raised to 30%."), truncated: false };
+  };
+  assert.equal(await run(db, config, third, deps), "succeeded");
+  assert.equal(llm.calls.length, 2);
+  assert.match(llm.calls[1].messages[0].content, /Changed decision "Deposit rules"/);
+  assert.match(llm.calls[1].messages[0].content, /Studio</);
+  const repo = repoDirFor(config, "project-slotguard");
+  assert.match(fs.readFileSync(path.join(repo, "app", "index.mjs"), "utf8"), /Studio 30/);
+  assert.ok(fs.existsSync(path.join(repo, "public", "style.css")), "files the update did not touch stay");
+  const release = JSON.parse(fs.readFileSync(path.join(repo, ".forma", "RELEASE.json"), "utf8"));
+  assert.equal(release.mode, "update");
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(repo, ".forma", "SNAPSHOT.json"), "utf8")), edited);
+});
+
+test("a build that fails keeps the last good release on disk", async () => {
+  const { db, config } = setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "agent" });
+  assert.equal(await run(db, config, queueJob(db), okDeps({ llm: () => fakeLlm([answerOf(appFiles("Good"))]) })), "succeeded");
+
+  const edited: CanvasSnapshot = structuredClone(snapshot);
+  edited.blocks[1].title = "Renamed screen";
+  const broken = fakeLlm([answerOf({ "app/index.mjs": "export default function setup() { throw new Error('nope'); }\n" })]);
+  const failed = queueJob(db, "project-slotguard", "slotguard", edited);
+  assert.equal(await run(db, config, failed, okDeps({ llm: () => broken })), "failed");
+  const job = getJob(db, failed.id)!;
+  assert.equal(job.stage, "build");
+  assert.match(job.error ?? "", /could not produce a working app after 3 tries/);
+
+  const repo = repoDirFor(config, "project-slotguard");
+  assert.match(fs.readFileSync(path.join(repo, "app", "index.mjs"), "utf8"), /Good/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(repo, ".forma", "SNAPSHOT.json"), "utf8")), snapshot);
+});
+
+test("with no AI key the builder says what to add", async () => {
+  const { db, config } = setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "agent" });
+  const job = queueJob(db);
+  assert.equal(await run(db, config, job, okDeps({ llm: () => null })), "failed");
+  const failed = getJob(db, job.id)!;
+  assert.equal(failed.stage, "build");
+  assert.match(failed.error ?? "", /needs an AI key.*GEMINI_API_KEY/);
+});
+
+test("auto without a key ships the ready-made SlotGuard and warns that edits are not applied", async () => {
+  const { db, config } = setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "auto" });
+  const job = queueJob(db);
+  assert.equal(await run(db, config, job, okDeps({ llm: () => null })), "succeeded");
+  const warn = listEvents(db, job.id).find((event) => event.level === "warn" && /NOT applied/.test(event.message));
+  assert.ok(warn, "the warning is in the log");
+  const release = JSON.parse(fs.readFileSync(path.join(repoDirFor(config, "project-slotguard"), ".forma", "RELEASE.json"), "utf8"));
+  assert.equal(release.builder, "reference");
+});
+
+test("auto without a key cannot deploy a workspace that has no ready-made app", async () => {
+  const { db, config } = setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "auto" });
+  const job = queueJob(db, "project-blank", "blank");
+  assert.equal(await run(db, config, job, okDeps({ llm: () => null })), "failed");
+  assert.match(getJob(db, job.id)!.error ?? "", /needs an AI key/);
+});
+
+test("the reference builder refuses a workspace without a ready-made app", async () => {
+  const { db, config } = setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "reference" });
+  const job = queueJob(db, "project-blank", "blank");
+  assert.equal(await run(db, config, job, okDeps({ llm: () => fakeLlm([answerOf(appFiles())]) })), "failed");
+  assert.match(getJob(db, job.id)!.error ?? "", /no ready-made app/);
+});
+
+test("a key is used even when the reference app exists, so canvas edits are applied", async () => {
+  const { db, config } = setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "auto" });
+  const llm = fakeLlm([answerOf(appFiles())]);
+  const job = queueJob(db);
+  assert.equal(await run(db, config, job, okDeps({ llm: () => llm })), "succeeded");
+  assert.equal(llm.calls.length, 1);
+});
+
+test("a reference release is not mistaken for an app the builder can edit", async () => {
+  const { db, config } = setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "reference" });
+  assert.equal(await run(db, config, queueJob(db), okDeps()), "succeeded");
+  const agent = loadConfig({ GCP_PROJECT_ID: "junction26hel-7607", DEPLOY_WORK_DIR: config.workDir, DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "agent" }, process.cwd());
+  const llm = fakeLlm([answerOf(appFiles())]);
+  const job = queueJob(db);
+  assert.equal(await run(db, agent, job, okDeps({ llm: () => llm })), "succeeded");
+  assert.equal(JSON.parse(fs.readFileSync(path.join(repoDirFor(agent, "project-slotguard"), ".forma", "RELEASE.json"), "utf8")).mode, "fresh");
 });

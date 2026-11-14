@@ -5,6 +5,8 @@ export type RunResult = { code: number | null; stdout: string; stderr: string; t
 export type RunOptions = {
   cwd?: string;
   env?: Record<string, string | undefined>;
+  // Start from an empty environment instead of this process's, so the command sees none of our secrets.
+  cleanEnv?: boolean;
   // Called for every line the command prints, from stdout and stderr.
   onLine?: (line: string) => void;
   signal?: AbortSignal;
@@ -25,7 +27,7 @@ export function runCommand(bin: string, args: string[], options: RunOptions = {}
     }
     const child = spawn(bin, args, {
       cwd: options.cwd,
-      env: { ...process.env, ...options.env },
+      env: (options.cleanEnv ? { ...options.env } : { ...process.env, ...options.env }) as NodeJS.ProcessEnv,
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,
     });
