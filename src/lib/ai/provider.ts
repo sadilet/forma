@@ -95,18 +95,27 @@ function geminiArchitect(apiKey: string): Architect {
   return {
     provider: "gemini",
     async completeJson(request) {
-      const response = await client.models.generateContent({
-        model: geminiModel(),
-        contents: request.prompt,
-        config: {
-          systemInstruction: request.system,
-          temperature: request.temperature,
-          maxOutputTokens: 4096,
-          responseMimeType: "application/json",
-          responseJsonSchema: geminiJsonSchema(request.schema),
-        },
-      });
-      return parseModelJson(request.schema, response.text);
+      try {
+        const response = await client.models.generateContent({
+          model: geminiModel(),
+          contents: request.prompt,
+          config: {
+            systemInstruction: request.system,
+            temperature: request.temperature,
+            maxOutputTokens: 8192,
+            responseMimeType: "application/json",
+            responseJsonSchema: geminiJsonSchema(request.schema),
+          },
+        });
+        return parseModelJson(request.schema, response.text);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (message.includes("INVALID_ARGUMENT")) {
+          console.error("gemini rejected the response schema", request.schemaName, message.slice(0, 300));
+          throw new Error("The model could not take that research request. Try again.");
+        }
+        throw error;
+      }
     },
     async streamText(request) {
       const response = await client.models.generateContentStream({
@@ -192,11 +201,23 @@ function geminiJsonSchema(schema: z.ZodType) {
   return sanitizeJsonSchema(schema.toJSONSchema());
 }
 
+const schemaKeysGeminiRejects = new Set([
+  "$schema",
+  "maxItems",
+  "minItems",
+  "maximum",
+  "minimum",
+  "exclusiveMaximum",
+  "exclusiveMinimum",
+  "maxLength",
+  "minLength",
+]);
+
 function sanitizeJsonSchema(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sanitizeJsonSchema);
   if (!value || typeof value !== "object") return value;
   const record = { ...(value as Record<string, unknown>) };
-  delete record.$schema;
+  for (const key of schemaKeysGeminiRejects) delete record[key];
   if (Array.isArray(record.type) && record.type.includes("null")) {
     const rest = record.type.filter((item) => item !== "null");
     const withoutType = { ...record };
@@ -216,7 +237,9 @@ function parseModelJson<T>(schema: z.ZodType<T>, text: string | undefined): T {
   const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   try {
     return schema.parse(JSON.parse(cleaned));
-  } catch {
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "invalid json";
+    console.error("architect json mismatch", detail.slice(0, 800), cleaned.slice(0, 500));
     throw new Error("The architect returned a response that did not match the expected structure.");
   }
 }

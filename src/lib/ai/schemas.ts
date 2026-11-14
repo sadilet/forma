@@ -74,9 +74,29 @@ export const findingSchema = z.object({
   relatedBlockTitle: z.string().nullable(),
 });
 
+export function clip<Item extends z.ZodType>(item: Item, limit: number) {
+  return z.preprocess(
+    (value: unknown) => (Array.isArray(value) ? value.slice(0, limit) : value),
+    z.array(item),
+  );
+}
+
+export const canvasProposalSchema = z.object({
+  action: z.enum(["update", "create"]),
+  blockId: z.string().nullable(),
+  kind: z.enum(BLOCK_KINDS),
+  title: z.string(),
+  description: z.string(),
+  reason: z.string(),
+  citationIds: z.array(z.string()),
+});
+
+export type CanvasProposal = z.infer<typeof canvasProposalSchema>;
+
 export const analysisSchema = z.object({
   summary: z.string(),
-  findings: z.array(findingSchema).max(8),
+  findings: clip(findingSchema, 8),
+  canvasProposals: clip(canvasProposalSchema, 4),
 });
 
 export type Analysis = z.infer<typeof analysisSchema>;

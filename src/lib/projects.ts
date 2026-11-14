@@ -3,6 +3,7 @@ import "server-only";
 import { and, desc, eq } from "drizzle-orm";
 import { db, readyDb } from "@/lib/db";
 import { conversations, projects, specifications } from "@/lib/db/schema";
+import { mergeMessages } from "@/lib/collab/messages";
 import { chatMessageSchema, specificationSchema, type ChatMessage, type Specification } from "@/lib/ai/schemas";
 import { z } from "zod";
 import type { ProjectTemplate } from "@/lib/canvas/kinds";
@@ -69,16 +70,59 @@ export function updateProjectRecord(id: string, patch: { name?: string; goal?: s
   return getProject(id);
 }
 
-export function getSpecification(projectId: string, blockId: string): Specification | null {
+export function getSpecificationRecord(projectId: string, blockId: string) {
   readyDb();
   const row = db
     .select()
     .from(specifications)
     .where(and(eq(specifications.projectId, projectId), eq(specifications.blockId, blockId)))
     .get();
-  if (!row) return null;
+  if (!row) return { specification: null, updatedAt: null };
   const parsed = specificationSchema.safeParse(JSON.parse(row.content));
-  return parsed.success ? parsed.data : null;
+  return {
+    specification: parsed.success ? parsed.data : null,
+    updatedAt: parsed.success ? row.updatedAt : null,
+  };
+}
+
+export function getSpecification(projectId: string, blockId: string): Specification | null {
+  return getSpecificationRecord(projectId, blockId).specification;
+}
+
+export function writeSpecification(
+  projectId: string,
+  blockId: string,
+  content: Specification,
+  expectedUpdatedAt: number | null,
+) {
+  readyDb();
+  const existing = db
+    .select()
+    .from(specifications)
+    .where(and(eq(specifications.projectId, projectId), eq(specifications.blockId, blockId)))
+    .get();
+  if ((existing?.updatedAt ?? null) !== expectedUpdatedAt) {
+    const current = getSpecificationRecord(projectId, blockId);
+    return { conflict: true as const, ...current };
+  }
+  const now = Date.now();
+  if (existing) {
+    db.update(specifications)
+      .set({ content: JSON.stringify(content), updatedAt: now })
+      .where(eq(specifications.id, existing.id))
+      .run();
+  } else {
+    db.insert(specifications)
+      .values({
+        id: crypto.randomUUID(),
+        projectId,
+        blockId,
+        content: JSON.stringify(content),
+        updatedAt: now,
+      })
+      .run();
+  }
+  return { conflict: false as const, updatedAt: now };
 }
 
 export function saveSpecification(projectId: string, blockId: string, content: Specification) {
@@ -119,6 +163,12 @@ export function getConversation(projectId: string, blockId: string): ChatMessage
   if (!row) return [];
   const parsed = messagesSchema.safeParse(JSON.parse(row.messages));
   return parsed.success ? parsed.data : [];
+}
+
+export function mergeConversation(projectId: string, blockId: string, incoming: ChatMessage[]) {
+  const merged = mergeMessages(getConversation(projectId, blockId), incoming);
+  saveConversation(projectId, blockId, merged);
+  return merged;
 }
 
 export function saveConversation(projectId: string, blockId: string, messages: ChatMessage[]) {

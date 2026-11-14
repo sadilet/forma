@@ -92,6 +92,50 @@ export function readyDb() {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS conversations_project_block
       ON conversations(project_id, block_id);
+    CREATE TABLE IF NOT EXISTS analyses (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      summary TEXT NOT NULL,
+      findings_json TEXT NOT NULL,
+      created_by TEXT NOT NULL REFERENCES users(id),
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS analyses_project_created
+      ON analyses(project_id, created_at);
+    CREATE TABLE IF NOT EXISTS research_artifacts (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      query_meta_json TEXT NOT NULL,
+      content_json TEXT NOT NULL,
+      citations_json TEXT NOT NULL,
+      pinned INTEGER NOT NULL DEFAULT 0,
+      created_by TEXT NOT NULL REFERENCES users(id),
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS research_artifacts_project_kind_created
+      ON research_artifacts(project_id, kind, created_at);
+    CREATE TABLE IF NOT EXISTS leads (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      person_name TEXT NOT NULL,
+      role_title TEXT NOT NULL,
+      seniority TEXT NOT NULL,
+      company_name TEXT NOT NULL,
+      company_domain TEXT NOT NULL,
+      location TEXT NOT NULL,
+      profile_urls_json TEXT NOT NULL,
+      skills_json TEXT NOT NULL,
+      match_confidence REAL,
+      warm_trigger TEXT NOT NULL,
+      outreach_angle TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS leads_project_status
+      ON leads(project_id, status);
   `);
   seedDemo();
   seedMeetingsDemo();

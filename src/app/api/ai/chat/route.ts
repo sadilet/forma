@@ -6,10 +6,11 @@ import { describeCanvas, describeSpecification } from "@/lib/ai/prompt";
 import { canvasSnapshotSchema, specificationSchema } from "@/lib/ai/schemas";
 import { BLOCK_KINDS, BLOCK_META, type BlockKind } from "@/lib/canvas/kinds";
 import { getProject } from "@/lib/projects";
+import { researchPrompt } from "@/lib/research/prompt-context";
 
 const requestSchema = z.object({
   projectId: z.string().min(1),
-  mode: z.enum(["global", "local"]),
+  mode: z.enum(["global", "local", "market", "leads"]),
   projectGoal: z.string().max(2000),
   canvas: canvasSnapshotSchema,
   block: z
@@ -50,6 +51,8 @@ export async function POST(request: Request) {
     "",
     "Answer the latest question in concise prose. Use short lists when they make requirements or edge cases easier to scan.",
     "If the team has not decided something, say so and offer a question they should answer. Do not dump a full specification unless they ask for one.",
+    "When a follow-up settles a product, market, or customer decision, say which canvas block should change and what its description should say. The team confirms the edit. Do not claim the canvas already changed.",
+    "Use citation ids from the saved research when you state a market or lead fact. Do not invent sources.",
     "",
     "Project",
     project.name,
@@ -58,11 +61,13 @@ export async function POST(request: Request) {
     parsed.data.projectGoal || project.goal || "Not stated.",
     "",
     "Mode",
-    parsed.data.mode === "local" ? "Selected component" : "Whole canvas",
+    parsed.data.mode,
     "",
     focus,
     "",
     describeCanvas(parsed.data.canvas),
+    "",
+    researchPrompt(project.id, parsed.data.mode),
   ].join("\n");
 
   try {
