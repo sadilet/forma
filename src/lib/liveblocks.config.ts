@@ -6,7 +6,7 @@ declare global {
       presence: JsonObject | null;
       forma?: {
         workspaceStage: "design" | "build";
-        architectTab: "review" | "market" | "leads" | "component";
+        architectTab: "review" | "market" | "leads" | "engineering" | "component";
         buildTab: "preview" | "engineering" | "code";
         voiceState: "idle" | "listening" | "speaking";
       };

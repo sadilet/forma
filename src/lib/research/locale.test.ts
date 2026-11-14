@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inferLocale, localeFromFields } from "./locale.ts";
+import { inferLocale, localeFromFields, researchPlace } from "./locale.ts";
 
 test("a canvas without a place uses Helsinki and marks the assumption", () => {
   const locale = inferLocale("Small teams lose decisions after meetings.");
@@ -28,4 +28,14 @@ test("an edited country name resolves to a country code when it is known", () =>
   assert.equal(locale.countryCode, "US");
   assert.equal(locale.city, "Austin");
   assert.equal(locale.assumed, false);
+});
+
+test("research place always has a city and a country", () => {
+  assert.deepEqual(researchPlace("Barbers in Austin need booking."), { city: "Austin", country: "United States", assumed: false });
+  assert.deepEqual(researchPlace("Sell this to salons in the United States."), {
+    city: "United States",
+    country: "United States",
+    assumed: true,
+  });
+  assert.deepEqual(researchPlace("Small teams lose decisions."), { city: "Helsinki", country: "Finland", assumed: true });
 });

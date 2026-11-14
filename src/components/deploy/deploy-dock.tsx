@@ -94,7 +94,7 @@ function DeployPanel({ project, editor }: { project: ProjectRecord; editor: Edit
 
   const active = isActive(job);
   const waitingForWorker = job?.status === "queued" && now - job.createdAt > 8000;
-  const dot = active ? "bg-accent animate-pulse" : job?.status === "succeeded" ? "bg-emerald-400" : job?.status === "failed" ? "bg-red-400" : "";
+  const dot = active ? "bg-accent animate-pulse" : job?.status === "succeeded" ? "bg-success" : job?.status === "failed" ? "bg-danger" : "";
 
   return (
     <div className="absolute right-3 top-3 z-20 flex flex-col items-end gap-2">
@@ -107,7 +107,7 @@ function DeployPanel({ project, editor }: { project: ProjectRecord; editor: Edit
       {open ? (
         <section
           aria-label="Deploy"
-          className="flex max-h-[70vh] w-[min(380px,calc(100vw-24px))] flex-col gap-3 rounded-2xl border border-border bg-[#14161b] p-4 shadow-2xl"
+          className="flex max-h-[70vh] w-[min(380px,calc(100vw-24px))] flex-col gap-3 rounded-2xl border border-border bg-surface p-4 shadow-float"
         >
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -128,20 +128,20 @@ function DeployPanel({ project, editor }: { project: ProjectRecord; editor: Edit
               href={job.url}
               target="_blank"
               rel="noreferrer"
-              className="flex items-center justify-between gap-2 rounded-lg border border-emerald-400/30 bg-emerald-400/10 px-3 py-2 text-sm text-emerald-200 hover:bg-emerald-400/15"
+              className="flex items-center justify-between gap-2 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-sm text-success hover:bg-success/15"
             >
               <span className="min-w-0 truncate">{job.url}</span>
               <ExternalLink className="h-3.5 w-3.5 shrink-0" />
             </a>
           ) : null}
           {job?.status === "succeeded" && !job.url ? (
-            <p className="rounded-lg border border-border bg-white/5 px-3 py-2 text-xs leading-5 text-muted-foreground">
+            <p className="rounded-lg border border-border bg-surface-hover px-3 py-2 text-xs leading-5 text-muted-foreground">
               Dry run finished. The app was prepared, but nothing was deployed.
             </p>
           ) : null}
           {job?.status === "failed" ? (
             <div className="grid gap-2">
-              <p className="whitespace-pre-wrap break-words rounded-lg border border-red-400/30 bg-red-400/10 px-3 py-2 text-xs leading-5 text-red-200">
+              <p className="whitespace-pre-wrap break-words rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs leading-5 text-danger">
                 {job.error ?? "The deploy failed."}
               </p>
               {job.url ? (
@@ -152,7 +152,7 @@ function DeployPanel({ project, editor }: { project: ProjectRecord; editor: Edit
             </div>
           ) : null}
           {waitingForWorker ? (
-            <p className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs leading-5 text-amber-100">
+            <p className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-5 text-warning">
               Waiting for the deploy worker. Start it in a terminal with <code className="font-mono">npm run deploy:worker</code>.
             </p>
           ) : null}
@@ -162,12 +162,12 @@ function DeployPanel({ project, editor }: { project: ProjectRecord; editor: Edit
               ref={logRef}
               role="log"
               aria-label="Deploy log"
-              className="min-h-24 flex-1 overflow-y-auto rounded-lg border border-border bg-black/30 p-2 font-mono text-[11px] leading-5"
+              className="min-h-24 flex-1 overflow-y-auto rounded-lg border border-border bg-surface-subtle p-2 font-mono text-[11px] leading-5"
             >
               {events.map((event) => (
                 <div
                   key={event.id}
-                  className={event.level === "error" ? "text-red-300" : event.level === "warn" ? "text-amber-200" : "text-muted-foreground"}
+                  className={event.level === "error" ? "text-danger" : event.level === "warn" ? "text-warning" : "text-muted-foreground"}
                 >
                   <span className="mr-2 opacity-50">{new Date(event.at).toLocaleTimeString([], { hour12: false })}</span>
                   {event.message}
@@ -195,16 +195,16 @@ function Steps({ job }: { job: DeployJob }) {
         const here = at === current && job.status !== "queued" && job.status !== "succeeded";
         const failed = here && job.status === "failed";
         const tone = failed
-          ? "border-red-400/40 bg-red-400/10 text-red-200"
+          ? "border-danger/40 bg-danger/10 text-danger"
           : done
-            ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
+            ? "border-success/30 bg-success/10 text-success"
             : here
               ? "border-accent/50 bg-accent/10 text-foreground"
               : "border-border text-muted-foreground";
         return (
           <li key={step.stage} className="flex items-center gap-1.5">
             <span className={`rounded-full border px-2 py-0.5 ${tone}`}>{step.label}</span>
-            {index < STEPS.length - 1 ? <span className="h-px w-3 bg-white/10" /> : null}
+            {index < STEPS.length - 1 ? <span className="h-px w-3 bg-border" /> : null}
           </li>
         );
       })}

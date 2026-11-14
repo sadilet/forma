@@ -1,7 +1,8 @@
 "use client";
 
 import { useEditor, type TLShape } from "tldraw";
-import { BLOCK_META, FORMA_BLOCK_TYPE, type BlockKind } from "@/lib/canvas/kinds";
+import { BLOCK_ICONS } from "@/lib/canvas/block-icons";
+import { BLOCK_META, FORMA_BLOCK_TYPE, blockInk, type BlockKind } from "@/lib/canvas/kinds";
 
 export const FORMA_EXPLORE_EVENT = "forma-explore";
 
@@ -26,6 +27,7 @@ export function isFormaBlock(shape: TLShape): shape is FormaBlockShape {
 export function FormaBlockCard({ shape }: { shape: FormaBlockShape }) {
   const editor = useEditor();
   const meta = BLOCK_META[shape.props.kind] ?? BLOCK_META.note;
+  const Icon = BLOCK_ICONS[shape.props.kind] ?? BLOCK_ICONS.note;
 
   return (
     <div
@@ -34,7 +36,8 @@ export function FormaBlockCard({ shape }: { shape: FormaBlockShape }) {
     >
       <span className="forma-block-accent" style={{ background: meta.color }} />
       <div className="forma-block-body">
-        <div className="forma-block-kicker" style={{ color: meta.color }}>
+        <div className="forma-block-kicker" style={{ color: blockInk(meta.color) }}>
+          <Icon className="forma-block-kind-icon" aria-hidden />
           {meta.label}
         </div>
         <div className="forma-block-title">{shape.props.title || "Untitled"}</div>

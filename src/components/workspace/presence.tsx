@@ -40,12 +40,12 @@ export function LiveStatus() {
         : status === "connecting" || status === "initial"
           ? "Connecting"
           : "Offline";
-  const dot = status === "connected" ? "bg-emerald-400" : status === "disconnected" ? "bg-[#f0a3a8]" : "bg-[#e8c36a]";
+  const dot = status === "connected" ? "bg-success" : status === "disconnected" ? "bg-danger" : "bg-warning";
 
   return (
-    <span className="flex items-center gap-2 whitespace-nowrap text-xs text-muted-foreground">
-      <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
-      {label}
+    <span title={label} className="flex items-center gap-2 whitespace-nowrap text-xs text-muted-foreground">
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
+      <span className="live-status-label">{label}</span>
     </span>
   );
 }
@@ -64,7 +64,7 @@ function Avatar({
   return (
     <span
       title={title}
-      className={`flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold text-[#101114] ring-2 ring-[#0e0f12] ${overlap ? "-ml-2" : ""}`}
+      className={`flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold text-[#101114] ring-2 ring-background ${overlap ? "-ml-2" : ""}`}
       style={{ background: color }}
     >
       {initials(name)}

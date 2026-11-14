@@ -126,7 +126,7 @@ export function MarketTab({
           {running ? "Reading the market" : "Run market research"}
         </Button>
         {running ? <p className="mt-2 text-xs leading-5 text-muted-foreground">This checks live sources and can take about a minute.</p> : null}
-        {error ? <p className="mt-3 rounded-lg border border-[#f0a3a8]/30 bg-[#f0a3a8]/10 px-3 py-2 text-sm leading-5 text-[#f0a3a8]">{error}</p> : null}
+        {error ? <p className="mt-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm leading-5 text-danger">{error}</p> : null}
         {content ? (
           <div className="mt-4 grid gap-3">
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-accent">{VERDICT[content.demandVerdict]}</p>

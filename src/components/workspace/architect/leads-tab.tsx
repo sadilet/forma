@@ -184,7 +184,7 @@ export function LeadsTab({
           </Button>
         </div>
         <p className="mt-2 text-xs leading-5 text-muted-foreground">Running again replaces this list. A follow-up should land the customer decision on the canvas.</p>
-        {error ? <p className="mt-3 rounded-lg border border-[#f0a3a8]/30 bg-[#f0a3a8]/10 px-3 py-2 text-sm leading-5 text-[#f0a3a8]">{error}</p> : null}
+        {error ? <p className="mt-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm leading-5 text-danger">{error}</p> : null}
         {leads.length > 0 ? (
           <div className="mt-4 flex flex-wrap items-center gap-1.5">
             <FilterChip active={filter === "all"} onClick={() => setFilter("all")}>All</FilterChip>
@@ -243,7 +243,7 @@ export function LeadsTab({
 
 function FilterChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
-    <button type="button" onClick={onClick} className={`rounded-full px-2.5 py-1 text-xs ${active ? "bg-white/10 text-foreground" : "text-muted-foreground hover:bg-white/5"}`}>
+    <button type="button" onClick={onClick} className={`rounded-full px-2.5 py-1 text-xs ${active ? "bg-accent-soft text-accent" : "text-muted-foreground hover:bg-surface-hover"}`}>
       {children}
     </button>
   );

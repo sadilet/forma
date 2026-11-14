@@ -76,6 +76,11 @@ export const BLOCK_META: Record<
   note: { label: "Note", color: "#c4c6d0", defaultTitle: "Note" },
 };
 
+// Block colors are pastel accents. Text set in them needs to follow the theme, so blend toward the ink color.
+export function blockInk(color: string) {
+  return `color-mix(in srgb, ${color} 55%, var(--foreground))`;
+}
+
 export const TASKFLOW_GOAL =
   "TaskFlow helps small teams capture, assign, and complete work. This canvas is a first pass: account access, a home dashboard, task lists, task creation, persistence, and notifications. Billing, roles, and failure behavior are still open.";
 

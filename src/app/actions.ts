@@ -55,7 +55,7 @@ const TEMPLATE_GOALS: Record<ProjectTemplate, string> = {
 
 export async function createProject(input: { name: string; template: ProjectTemplate }) {
   const user = await getCurrentUser();
-  if (!user) redirect("/");
+  if (!user) redirect("/login");
   const parsed = createSchema.safeParse(input);
   if (!parsed.success) return { error: "Give the workspace a name." };
 

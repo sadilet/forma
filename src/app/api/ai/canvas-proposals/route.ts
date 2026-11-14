@@ -2,15 +2,15 @@ import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth";
 import { loadArchitect } from "@/lib/ai/provider";
 import { canvasProposalSchema, canvasSnapshotSchema } from "@/lib/ai/schemas";
+import { CHAT_MODES } from "@/lib/architect/tabs";
 import { BLOCK_KINDS } from "@/lib/canvas/kinds";
 import { getProject } from "@/lib/projects";
 import { acceptProposals } from "@/lib/research/proposals";
-import { researchPrompt } from "@/lib/research/prompt-context";
-import { latestResearchArtifact } from "@/lib/records";
+import { citationsForMode, researchPrompt } from "@/lib/research/prompt-context";
 
 const bodySchema = z.object({
   projectId: z.string().min(1),
-  mode: z.enum(["global", "local", "market", "leads"]),
+  mode: z.enum(CHAT_MODES),
   projectGoal: z.string().max(2000),
   canvas: canvasSnapshotSchema,
   message: z.string().min(1).max(8000),
@@ -38,7 +38,7 @@ export async function POST(request: Request) {
   const project = await getProject(parsed.data.projectId);
   if (!project) return Response.json({ error: "This workspace no longer exists." }, { status: 404 });
 
-  const citations = await citationsFor(project.id, parsed.data.mode);
+  const citations = await citationsForMode(project.id, parsed.data.mode);
   const citationIds = new Set(citations.map((citation) => citation.id));
   try {
     const drafted = await loaded.architect.completeJson({
@@ -81,9 +81,4 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : "A canvas proposal could not be drafted.";
     return Response.json({ error: message }, { status: 502 });
   }
-}
-
-async function citationsFor(projectId: string, mode: "global" | "local" | "market" | "leads") {
-  if (mode !== "market" && mode !== "leads") return [];
-  return (await latestResearchArtifact(projectId, mode))?.citations ?? [];
 }

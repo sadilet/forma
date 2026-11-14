@@ -103,3 +103,13 @@ function mentions(haystack: string, needle: string) {
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(haystack);
 }
+
+// The place research runs for when nobody picked one. A named city wins. A country with no city of its own
+// researches the country as a whole. Nothing named falls back to Helsinki, Finland. Both fields are always filled,
+// so a run started from the chat bar never stalls on a form.
+export function researchPlace(text: string): { city: string; country: string; assumed: boolean } {
+  const found = inferLocale(text);
+  if (found.city.trim()) return { city: found.city, country: found.country, assumed: found.assumed };
+  if (found.cityUnclear) return { city: found.country, country: found.country, assumed: true };
+  return { city: DEFAULT_LOCALE.city, country: DEFAULT_LOCALE.country, assumed: true };
+}

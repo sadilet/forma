@@ -1,9 +1,11 @@
 "use client";
 
+import { ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { createProject, logout } from "@/app/actions";
 import { Logo } from "@/components/logo";
+import { ThemeToggle } from "@/components/theme-provider";
 import { Button, Input, Modal } from "@/components/ui";
 import type { SessionUser } from "@/lib/auth";
 import type { ProjectTemplate } from "@/lib/canvas/kinds";
@@ -29,8 +31,9 @@ export function ProjectHome({ user, projects }: { user: SessionUser; projects: P
             >
               {initials(user.name)}
             </span>
-            {user.name}
+            <span className="hidden sm:inline">{user.name}</span>
           </span>
+          <ThemeToggle />
           <form action={logout}>
             <Button type="submit" variant="ghost" size="sm">
               Sign out
@@ -56,13 +59,13 @@ export function ProjectHome({ user, projects }: { user: SessionUser; projects: P
           <li key={project.id}>
             <Link
               href={`/w/${project.id}`}
-              className="flex items-center gap-4 py-4 transition-colors hover:bg-white/[0.03]"
+              className="group -mx-3 flex items-center gap-4 rounded-xl px-3 py-4 transition-colors hover:bg-surface-hover"
             >
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2">
                   <span className="font-medium">{project.name}</span>
                   {project.template !== "blank" ? (
-                    <span className="rounded-full bg-white/6 px-2 py-0.5 text-[11px] text-muted-foreground">
+                    <span className="rounded-full bg-surface-hover px-2 py-0.5 text-[11px] text-muted-foreground">
                       Demo
                     </span>
                   ) : null}
@@ -71,12 +74,15 @@ export function ProjectHome({ user, projects }: { user: SessionUser; projects: P
                   {project.goal || "Blank canvas"}
                 </span>
               </span>
-              <span className="text-sm text-muted-foreground">Open</span>
+              <span className="flex items-center gap-1 text-sm text-muted-foreground transition-colors group-hover:text-foreground">
+                Open
+                <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" aria-hidden />
+              </span>
             </Link>
           </li>
         ))}
         {projects.length === 0 ? (
-          <li className="py-8 text-sm text-muted-foreground">No workspaces yet.</li>
+          <li className="py-8 text-sm text-muted-foreground">No workspaces yet. Create one to start on a blank canvas.</li>
         ) : null}
       </ul>
 
@@ -129,7 +135,7 @@ export function ProjectHome({ user, projects }: { user: SessionUser; projects: P
               onClick={() => setTemplate("slotguard")}
             />
           </div>
-          {error ? <p className="text-sm text-[#f0a3a8]">{error}</p> : null}
+          {error ? <p className="text-sm text-danger">{error}</p> : null}
           <Button type="submit" variant="primary" disabled={pending || name.trim().length === 0}>
             {pending ? "Creating…" : "Create workspace"}
           </Button>
@@ -154,8 +160,9 @@ function TemplateChoice({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-xl border px-3 py-3 text-left ${
-        selected ? "border-accent/70 bg-accent/10" : "border-border hover:bg-white/[0.03]"
+      aria-pressed={selected}
+      className={`rounded-xl border px-3 py-3 text-left transition-colors ${
+        selected ? "border-accent/70 bg-accent-soft" : "border-border hover:bg-surface-hover"
       }`}
     >
       <span className="block text-sm font-medium">{title}</span>

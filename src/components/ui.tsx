@@ -12,11 +12,11 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        primary: "bg-foreground text-background hover:bg-white",
-        accent: "bg-accent text-[#1a1330] hover:bg-[#c4b5fd]",
-        quiet: "bg-white/5 text-foreground hover:bg-white/10",
-        ghost: "text-muted-foreground hover:bg-white/6 hover:text-foreground",
-        outline: "border border-border bg-transparent text-foreground hover:bg-white/5",
+        primary: "bg-foreground text-background hover:opacity-85",
+        accent: "bg-accent text-accent-ink hover:bg-accent-strong",
+        quiet: "border border-border bg-surface-elevated text-foreground shadow-soft hover:bg-surface-hover",
+        ghost: "text-muted-foreground hover:bg-surface-hover hover:text-foreground",
+        outline: "border border-border-strong bg-transparent text-foreground hover:bg-surface-hover",
       },
       size: {
         sm: "h-8 px-2.5 text-[13px]",
@@ -45,7 +45,7 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
     <input
       {...props}
       className={cn(
-        "h-10 w-full rounded-lg border border-border bg-black/20 px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-accent/70",
+        "h-10 w-full rounded-lg border border-border-strong bg-input px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-accent/70",
         props.className,
       )}
     />
@@ -57,7 +57,7 @@ export function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement
     <textarea
       {...props}
       className={cn(
-        "w-full resize-none rounded-lg border border-border bg-black/20 px-3 py-2 text-sm leading-5 outline-none transition-colors placeholder:text-muted-foreground focus:border-accent/70",
+        "w-full resize-none rounded-lg border border-border-strong bg-input px-3 py-2 text-sm leading-5 outline-none transition-colors placeholder:text-muted-foreground focus:border-accent/70",
         props.className,
       )}
     />
@@ -84,7 +84,7 @@ export function Hint({
         <Tooltip.Content
           side="right"
           sideOffset={8}
-          className="z-50 flex items-center gap-2 rounded-md border border-border bg-[#1c1e24] px-2 py-1 text-xs text-foreground shadow-lg"
+          className="z-50 flex items-center gap-2 rounded-md border border-border bg-surface-elevated px-2 py-1 text-xs text-foreground shadow-panel"
         >
           {label}
           {shortcut ? <span className="text-muted-foreground">{shortcut}</span> : null}
@@ -110,8 +110,8 @@ export function Modal({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/55" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(440px,calc(100%-32px))] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-[#14161b] p-5 shadow-2xl">
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-scrim backdrop-blur-[2px]" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(440px,calc(100%-32px))] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-surface p-5 shadow-float">
           <div className="flex items-start justify-between gap-4">
             <div>
               <Dialog.Title className="text-base font-semibold">{title}</Dialog.Title>
@@ -121,7 +121,7 @@ export function Modal({
                 </Dialog.Description>
               ) : null}
             </div>
-            <Dialog.Close className="rounded-md p-1 text-muted-foreground hover:bg-white/6 hover:text-foreground">
+            <Dialog.Close aria-label="Close" className="rounded-md p-1 text-muted-foreground hover:bg-surface-hover hover:text-foreground">
               <X className="h-4 w-4" />
             </Dialog.Close>
           </div>

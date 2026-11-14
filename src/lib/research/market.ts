@@ -33,7 +33,11 @@ export async function runMarketResearch(input: {
   const plan = await planQueries(input, place, failures);
   queries.push(plan.companyQuery, plan.newsQuery);
 
-  const companies = await input.source.searchCompanies(plan.companyQuery);
+  // Company search and market news do not depend on each other.
+  const [companies, marketNews] = await Promise.all([
+    input.source.searchCompanies(plan.companyQuery),
+    settleList(input.source.searchNews({ query: plan.newsQuery, limit: 5 }), failures, "Market news was unavailable."),
+  ]);
   if (companies.length === 0) {
     throw new ResearchFailure("No companies matched this canvas. Change the place or the goal and run again.", 422);
   }
@@ -51,12 +55,6 @@ export async function runMarketResearch(input: {
         .join(" · "),
     });
   }
-
-  const marketNews = await settleList(
-    input.source.searchNews({ query: plan.newsQuery, limit: 5 }),
-    failures,
-    "Market news was unavailable.",
-  );
   for (const article of marketNews) hits.push({ ...article, sourceKind: "news" });
 
   const domainNews = await Promise.all(
@@ -88,7 +86,7 @@ export async function runMarketResearch(input: {
 
   const pages = (
     await Promise.all(
-      pricingHits.slice(0, 4).map(async (hit) => {
+      pricingHits.slice(0, 2).map(async (hit) => {
         const markdown = await settleText(
           input.source.scrapeMarkdown(hit.url),
           failures,
@@ -110,6 +108,7 @@ export async function runMarketResearch(input: {
       "Use only the retrieved sources. Cite their ids on every competitor, signal, kill risk, and wedge claim.",
       "Every competitor must be one of the listed companies. Copy its domain exactly as listed.",
       "If a fact is not in the sources, leave it out.",
+      "Keep the executive summary and each competitor field under 40 words. Return at most 5 competitors, 4 signals, and 3 kill risks.",
       "Return at least one canvasProposal. Update an existing decision or note by its id from the canvas, or create a decision when none of them can hold the conclusion. The description replaces that block after the team confirms. Build will read the canvas, so the description has to be specific.",
       "Do not invent citation ids.",
     ].join(" "),
@@ -130,10 +129,11 @@ export async function runMarketResearch(input: {
       describeCitations(citations),
       "",
       "Pricing pages",
-      ...pages.map((page) => `URL ${page.url}\n${page.markdown}`),
+      // Long page dumps are what push the model into truncated JSON. Keep each excerpt short.
+      ...pages.map((page) => `URL ${page.url}\n${page.markdown.slice(0, 1200)}`),
     ]
       .join("\n")
-      .slice(0, 16_000),
+      .slice(0, 12_000),
   });
 
   const report = bindReport(drafted, companies, citations, input.canvas);

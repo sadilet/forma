@@ -6,12 +6,14 @@ import { Component, useEffect, useMemo, useState } from "react";
 import {
   GeoShapeGeoStyle,
   Tldraw,
+  useEditor,
   type Editor,
   type TLComponents,
   type TLStore,
 } from "tldraw";
 import "tldraw/tldraw.css";
 import "@/lib/liveblocks.config";
+import { useTheme } from "@/components/theme-provider";
 import { FormaBlockShapeUtil } from "@/lib/canvas/forma-block-util";
 import { isFormaBlock, type FormaBlockShape } from "@/lib/canvas/forma-block-view";
 import { canvasNeedsMeetingsSeed, seedMeetings } from "@/lib/canvas/meetings";
@@ -207,10 +209,11 @@ function TldrawSurface({
   onMount: (editor: Editor) => void;
   onUnmount: () => void;
 }) {
+  const { theme } = useTheme();
   const shared = {
     shapeUtils: SHAPE_UTILS,
     components: CANVAS_COMPONENTS,
-    colorScheme: "dark" as const,
+    colorScheme: theme,
     licenseKey,
     autoFocus: false,
     options: { maxPages: 1 },
@@ -222,9 +225,29 @@ function TldrawSurface({
 
   return (
     <div className="forma-canvas absolute inset-0">
-      {store ? <Tldraw store={store} {...shared} /> : <Tldraw persistenceKey={persistenceKey} {...shared} />}
+      {store ? (
+        <Tldraw store={store} {...shared}>
+          <ThemeSync />
+        </Tldraw>
+      ) : (
+        <Tldraw persistenceKey={persistenceKey} {...shared}>
+          <ThemeSync />
+        </Tldraw>
+      )}
     </div>
   );
+}
+
+// tldraw keeps its own color scheme preference. Follow the app theme so the grid, arrows, and selection stay legible.
+function ThemeSync() {
+  const editor = useEditor();
+  const { theme } = useTheme();
+  useEffect(() => {
+    if (editor.user.getUserPreferences().colorScheme !== theme) {
+      editor.user.updateUserPreferences({ colorScheme: theme });
+    }
+  }, [editor, theme]);
+  return null;
 }
 
 function prepareEditor(editor: Editor, user: SessionUser) {
@@ -232,7 +255,6 @@ function prepareEditor(editor: Editor, user: SessionUser) {
     id: user.id,
     name: user.name,
     color: user.color,
-    colorScheme: "dark",
   });
   editor.updateInstanceState({ isGridMode: true });
 }
@@ -283,7 +305,7 @@ async function seedSharedTemplate(
 
 export function CanvasMessage({ title, detail }: { title: string; detail?: string }) {
   return (
-    <div className="absolute inset-0 grid place-items-center bg-[#101114] px-6 text-center">
+    <div className="absolute inset-0 grid place-items-center bg-canvas px-6 text-center">
       <div>
         <p className="text-sm font-medium">{title}</p>
         {detail ? <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">{detail}</p> : null}

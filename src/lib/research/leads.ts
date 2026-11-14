@@ -59,16 +59,14 @@ export async function runLeadResearch(input: {
   const place = localeLabel(input.locale);
   const companyQuery = `${input.brief.targetCompanyQuery} in ${place}`.slice(0, 700);
   const peopleQuery = `${input.brief.buyerPersonaQuery} at ${input.brief.targetCompanyQuery} in ${place}`.slice(0, 700);
-  const companies = await settleList(
-    input.source.searchCompanies(companyQuery),
-    failures,
-    "Company search was unavailable.",
-  );
-  const people = await input.source.searchPeople({
-    query: peopleQuery,
-    countries: input.locale.countryCode ? [input.locale.countryCode] : [],
-    minYears: input.brief.minExperienceYears,
-  });
+  const [companies, people] = await Promise.all([
+    settleList(input.source.searchCompanies(companyQuery), failures, "Company search was unavailable."),
+    input.source.searchPeople({
+      query: peopleQuery,
+      countries: input.locale.countryCode ? [input.locale.countryCode] : [],
+      minYears: input.brief.minExperienceYears,
+    }),
+  ]);
   if (people.length === 0) {
     throw new ResearchFailure("No people matched this brief. Change the buyer, the place, or the years of experience.", 422);
   }

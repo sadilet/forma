@@ -5,7 +5,15 @@ import { z } from "zod";
 import type { CompanyHit, PersonHit, ResearchSource } from "@/lib/context-dev/source";
 import { ResearchFailure } from "@/lib/research/failure";
 
-const ULTRA = { maxRetries: 1 } as const;
+// Company and people search stay on `ultra`. `fast` comes back empty too often for buyer briefs
+// (Context.dev docs: ultra checks each result against every criterion). Web search, answers, and
+// scrapes keep the quicker path with partial timeouts and docs caching.
+
+const REQUEST = { maxRetries: 1 } as const;
+const SEARCH_DEADLINE_MS = 12_000;
+const ANSWER_DEADLINE_MS = 18_000;
+// Official docs change slowly. Accept a week-old cached page so scrapes hit cache more often.
+const DOCS_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
 
 let client: ContextDev | null = null;
 
@@ -16,7 +24,8 @@ export function contextConfigured() {
 export function getResearchSource(): ResearchSource | null {
   const apiKey = process.env.CONTEXT_DEV_API_KEY?.trim();
   if (!apiKey) return null;
-  if (!client) client = new ContextDev({ apiKey, timeout: 60_000, maxRetries: 2 });
+  // Ultra company search can take ~20s; complex ultra people search can take longer.
+  if (!client) client = new ContextDev({ apiKey, timeout: 90_000, maxRetries: 1 });
   return createSource(client);
 }
 
@@ -25,7 +34,7 @@ function createSource(context: ContextDev): ResearchSource {
     async searchCompanies(query) {
       const response = await call(() =>
         context.post<unknown>("/company/search", {
-          ...ULTRA,
+          ...REQUEST,
           body: { query: query.slice(0, 2000), mode: "ultra" },
         }),
       );
@@ -44,7 +53,7 @@ function createSource(context: ContextDev): ResearchSource {
               ...(input.minYears > 0 ? { years_of_experience_min: input.minYears } : {}),
             },
           },
-          ULTRA,
+          REQUEST,
         ),
       );
       return response.results.slice(0, 8).flatMap((person) => {
@@ -96,6 +105,8 @@ function createSource(context: ContextDev): ResearchSource {
             ? { includeDomains: input.includeDomains.slice(0, 20) }
             : {}),
           ...(country ? { country: country as "fi" } : {}),
+          // Prefer a partial page of results over waiting out a slow miss.
+          timeoutOpts: { milliseconds: SEARCH_DEADLINE_MS, behavior: "return-partial" },
         }),
       );
       return response.results.slice(0, input.numResults).map((result) => ({
@@ -111,6 +122,8 @@ function createSource(context: ContextDev): ResearchSource {
           url,
           formats: { markdown: true },
           sharedParams: { mainContentOnly: true },
+          maxAgeMs: DOCS_CACHE_MS,
+          timeoutOpts: { milliseconds: SEARCH_DEADLINE_MS, behavior: "fail" },
         }),
       );
       if (page.markdown?.success !== true) return null;
@@ -123,6 +136,7 @@ function createSource(context: ContextDev): ResearchSource {
           task: input.task.slice(0, 4000),
           json_format: input.jsonFormat,
           mode: "fast",
+          timeoutOpts: { milliseconds: ANSWER_DEADLINE_MS, behavior: "return-partial" },
         }),
       );
       return {
@@ -198,7 +212,9 @@ const companyResponseSchema = z
   })
   .passthrough();
 
-function toCompany(company: z.infer<typeof companyResponseSchema>["results"] extends Array<infer Item> | undefined ? Item : never): CompanyHit {
+function toCompany(
+  company: z.infer<typeof companyResponseSchema>["results"] extends Array<infer Item> | undefined ? Item : never,
+): CompanyHit {
   const employees = company.employees;
   const headcount =
     employees?.count != null

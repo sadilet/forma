@@ -149,6 +149,34 @@ export async function saveSpecification(projectId: string, blockId: string, cont
 
 const messagesSchema = z.array(chatMessageSchema);
 
+export async function listSpecifications(
+  projectId: string,
+): Promise<{ blockId: string; specification: Specification; updatedAt: number }[]> {
+  await readyDb();
+  const rows = await db.select().from(specifications).where(eq(specifications.projectId, projectId));
+  return rows.flatMap((row) => {
+    try {
+      const parsed = specificationSchema.safeParse(JSON.parse(row.content));
+      return parsed.success ? [{ blockId: row.blockId, specification: parsed.data, updatedAt: row.updatedAt }] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+export async function listConversationThreads(projectId: string) {
+  await readyDb();
+  const rows = await db.select().from(conversations).where(eq(conversations.projectId, projectId));
+  return rows.flatMap((row) => {
+    try {
+      const parsed = messagesSchema.safeParse(JSON.parse(row.messages));
+      return parsed.success ? [{ blockId: row.blockId, messages: parsed.data, updatedAt: row.updatedAt }] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 export async function getConversation(projectId: string, blockId: string): Promise<ChatMessage[]> {
   await readyDb();
   const [row] = await db
