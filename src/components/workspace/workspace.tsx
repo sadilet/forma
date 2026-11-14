@@ -1,9 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
+import { toast } from "sonner";
 import type { Editor } from "tldraw";
+import { DeployDock } from "@/components/deploy/deploy-dock";
 import { TooltipProvider } from "@/components/ui";
 import { AiSidebar } from "@/components/workspace/ai-sidebar";
+import { CollabBridge } from "@/components/workspace/collab-bridge";
+import { receiveRemote, startDraft } from "@/lib/collab/draft";
+import type { FormaRoomEvent } from "@/lib/collab/events";
+import { recordEvent, type SyncVersions } from "@/lib/collab/sync";
 import { BottomBar } from "@/components/workspace/bottom-bar";
 import {
   CanvasStage,
@@ -48,7 +54,25 @@ function WorkspaceFrame({
   const [editor, setEditor] = useState<Editor | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
   const [mode, setMode] = useState<"architect" | "explorer">("architect");
+  const [goal, setGoal] = useState(() => startDraft({ value: project.goal, version: null }));
+  const [versions, setVersions] = useState<SyncVersions>({});
   const ui = useCanvasUi(editor);
+
+  function onCollab(event: FormaRoomEvent) {
+    if (event.actorId === user.id) return;
+    if (event.resource === "goal") {
+      void fetch(`/api/project?projectId=${project.id}`)
+        .then(async (response) => {
+          const data = await response.json();
+          if (!response.ok || typeof data.goal !== "string") return;
+          const focused = document.activeElement?.id === "forma-goal";
+          setGoal((current) => receiveRemote(current, { value: data.goal, version: null }, focused || current.edits !== null));
+        })
+        .catch(() => undefined);
+    }
+    if (event.resource !== "conversation") toast.message(event.summary);
+    setVersions((current) => recordEvent(current, event));
+  }
 
   useEffect(() => {
     const openExplorer = () => {
@@ -62,6 +86,7 @@ function WorkspaceFrame({
   return (
     <TooltipProvider>
       <div className="flex h-screen flex-col overflow-hidden bg-background">
+        {live ? <CollabBridge onEvent={onCollab} /> : null}
         <TopNav
           user={user}
           project={project}
@@ -86,6 +111,7 @@ function WorkspaceFrame({
               onEditor={setEditor}
             />
             <LeftToolbar editor={editor} ui={ui} />
+            <DeployDock editor={editor} project={project} />
             <BottomBar
               editor={editor}
               ui={ui}
@@ -109,6 +135,10 @@ function WorkspaceFrame({
             editor={editor}
             ui={ui}
             project={project}
+            live={live}
+            goal={goal}
+            setGoal={setGoal}
+            versions={versions}
           />
         </div>
       </div>

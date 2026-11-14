@@ -1,27 +1,42 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { toast } from "sonner";
 import { Loader2, Sparkles, X } from "lucide-react";
 import type { Editor } from "tldraw";
+import { Chat } from "@/components/workspace/architect/chat";
+import { LeadsTab } from "@/components/workspace/architect/leads-tab";
+import { MarketTab } from "@/components/workspace/architect/market-tab";
+import { ProposalList } from "@/components/workspace/architect/proposals";
+import { FormaPresence } from "@/components/workspace/collab-bridge";
 import { Button, Textarea } from "@/components/ui";
 import type { CanvasUi } from "@/components/workspace/canvas-stage";
 import { extractCanvas } from "@/lib/canvas/extract";
 import { FORMA_BLOCK_TYPE } from "@/lib/canvas/kinds";
-import { BLOCK_META, type BlockKind } from "@/lib/canvas/kinds";
+import { BLOCK_META } from "@/lib/canvas/kinds";
 import {
   SPEC_FIELDS,
   emptySpecification,
-  type Analysis,
-  type ChatMessage,
+  type CanvasProposal,
   type Finding,
   type Specification,
 } from "@/lib/ai/schemas";
-import { suggestionsFor } from "@/lib/ai/prompt";
+import {
+  draftValue,
+  editDraft,
+  keepEdits,
+  markSaved,
+  receiveRemote,
+  startDraft,
+  takeIncoming,
+  type Draft,
+} from "@/lib/collab/draft";
+import { versionOf, type SyncVersions } from "@/lib/collab/sync";
 import type { ProjectRecord } from "@/lib/projects";
 
 type Mode = "architect" | "explorer";
 type ExplorerTab = "discuss" | "spec";
+type CanvasTab = "review" | "market" | "leads";
 
 export function AiSidebar({
   open,
@@ -31,6 +46,10 @@ export function AiSidebar({
   editor,
   ui,
   project,
+  live,
+  goal: goalDraft,
+  setGoal,
+  versions,
 }: {
   open: boolean;
   mode: Mode;
@@ -39,16 +58,24 @@ export function AiSidebar({
   editor: Editor | null;
   ui: CanvasUi;
   project: ProjectRecord;
+  live: boolean;
+  goal: Draft<string>;
+  setGoal: Dispatch<SetStateAction<Draft<string>>>;
+  versions: SyncVersions;
 }) {
+  const goalText = draftValue(goalDraft);
   const block = ui.block;
   const blockKey = mode === "explorer" && block ? block.id : "";
-  const [goal, setGoal] = useState(project.goal);
+  const [wide, setWide] = useState(false);
+  const [canvasTab, setCanvasTab] = useState<CanvasTab>("review");
   const [tab, setTab] = useState<ExplorerTab>("discuss");
+  const architectTab = mode === "explorer" ? "component" : canvasTab;
 
   if (!open) return null;
 
   return (
-    <aside className="flex h-full w-[min(400px,100%)] shrink-0 flex-col border-l border-border bg-[#121318]">
+    <aside className={`flex h-full shrink-0 flex-col border-l border-border bg-[#121318] ${wide ? "w-[min(560px,100%)]" : "w-[min(420px,100%)]"}`}>
+      {live ? <FormaPresence tab={architectTab} /> : null}
       <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
         <Sparkles className="h-4 w-4 text-accent" />
         <div className="min-w-0 flex-1">
@@ -59,6 +86,9 @@ export function AiSidebar({
               : "Whole canvas"}
           </p>
         </div>
+        <button type="button" onClick={() => setWide((value) => !value)} className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-white/6 hover:text-foreground">
+          {wide ? "Narrow" : "Widen"}
+        </button>
         <button type="button" aria-label="Close architect" onClick={onClose} className="rounded-md p-1 text-muted-foreground hover:bg-white/6 hover:text-foreground">
           <X className="h-4 w-4" />
         </button>
@@ -74,16 +104,52 @@ export function AiSidebar({
       </div>
 
       {mode === "architect" ? (
-        <ArchitectPane editor={editor} project={project} goal={goal} setGoal={setGoal} blockKey={blockKey} />
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="grid grid-cols-3 gap-1 px-2 pt-1">
+            <ModeButton active={canvasTab === "review"} onClick={() => setCanvasTab("review")}>Review</ModeButton>
+            <ModeButton active={canvasTab === "market"} onClick={() => setCanvasTab("market")}>Market</ModeButton>
+            <ModeButton active={canvasTab === "leads"} onClick={() => setCanvasTab("leads")}>Leads</ModeButton>
+          </div>
+          {canvasTab === "review" ? (
+            <ArchitectPane
+              editor={editor}
+              project={project}
+              goalDraft={goalDraft}
+              setGoal={setGoal}
+              refreshToken={versionOf(versions, "analysis")}
+              chatToken={versionOf(versions, "conversation", "")}
+            />
+          ) : null}
+          {canvasTab === "market" ? (
+            <MarketTab
+              editor={editor}
+              project={project}
+              goal={goalText}
+              refreshToken={versionOf(versions, "market")}
+              chatToken={versionOf(versions, "conversation", "__market__")}
+            />
+          ) : null}
+          {canvasTab === "leads" ? (
+            <LeadsTab
+              editor={editor}
+              project={project}
+              goal={goalText}
+              refreshToken={versionOf(versions, "leads")}
+              chatToken={versionOf(versions, "conversation", "__leads__")}
+            />
+          ) : null}
+        </div>
       ) : (
         <ExplorerPane
           editor={editor}
           project={project}
-          goal={goal}
+          goal={goalText}
           block={block}
           tab={tab}
           setTab={setTab}
           blockKey={blockKey}
+          chatToken={versionOf(versions, "conversation", blockKey)}
+          specToken={block ? versionOf(versions, "specification", block.id) : 0}
         />
       )}
     </aside>
@@ -93,19 +159,38 @@ export function AiSidebar({
 function ArchitectPane({
   editor,
   project,
-  goal,
+  goalDraft,
   setGoal,
-  blockKey,
+  refreshToken,
+  chatToken,
 }: {
   editor: Editor | null;
   project: ProjectRecord;
-  goal: string;
-  setGoal: (goal: string) => void;
-  blockKey: string;
+  goalDraft: Draft<string>;
+  setGoal: Dispatch<SetStateAction<Draft<string>>>;
+  refreshToken: number;
+  chatToken: number;
 }) {
-  const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const goal = draftValue(goalDraft);
+  const [analysis, setAnalysis] = useState<Review | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/ai/analyze?projectId=${project.id}`)
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error ?? "Could not load the review.");
+        if (!cancelled) setAnalysis(data.analysis ?? null);
+      })
+      .catch((caught: unknown) => {
+        if (!cancelled) setError(caught instanceof Error ? caught.message : "Could not load the review.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project.id, refreshToken]);
 
   async function analyze() {
     if (!editor) return;
@@ -123,7 +208,7 @@ function ArchitectPane({
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error ?? "Analysis failed.");
-      setAnalysis(data as Analysis);
+      setAnalysis(data.analysis ?? null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Analysis failed.");
     } finally {
@@ -137,13 +222,44 @@ function ArchitectPane({
         <label className="grid gap-1.5 text-xs text-muted-foreground">
           Project goal
           <Textarea
+            id="forma-goal"
             value={goal}
             rows={3}
-            onChange={(event) => setGoal(event.target.value)}
-            onBlur={() => void updateGoal(project.id, goal)}
+            onChange={(event) => {
+              const value = event.target.value;
+              setGoal((current) => editDraft(current, value));
+            }}
+            onBlur={() => {
+              if (goalDraft.edits === null) setGoal(takeIncoming);
+              else if (!goalDraft.incoming) void saveGoal(project.id, goalDraft, setGoal);
+            }}
             placeholder="What is this product trying to do?"
           />
         </label>
+        {goalDraft.incoming ? (
+          <div className="mt-2 rounded-xl border border-[#f0a05a]/30 bg-[#f0a05a]/10 px-3 py-2 text-xs leading-5">
+            <p>A teammate saved a different goal:</p>
+            <p className="mt-1 line-clamp-3 text-foreground/80">{goalDraft.incoming.value || "(empty)"}</p>
+            <div className="mt-1.5 flex gap-3">
+              <button type="button" className="text-accent hover:underline" onClick={() => setGoal(takeIncoming)}>
+                Use theirs
+              </button>
+              {goalDraft.edits !== null ? (
+                <button
+                  type="button"
+                  className="text-accent hover:underline"
+                  onClick={() => {
+                    const kept = keepEdits(goalDraft);
+                    setGoal(kept);
+                    void saveGoal(project.id, kept, setGoal);
+                  }}
+                >
+                  Keep mine
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
         <Button variant="accent" className="mt-3 w-full" disabled={!editor || analyzing} onClick={() => void analyze()}>
           {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
           {analyzing ? "Reading the canvas" : "Analyze canvas"}
@@ -159,10 +275,11 @@ function ArchitectPane({
                 onFocus={() => focusBlock(editor, finding.relatedBlockId)}
               />
             ))}
+            <ProposalList proposals={analysis.canvasProposals ?? []} citations={[]} editor={editor} />
           </div>
         ) : (
           <p className="mt-4 text-sm leading-6 text-muted-foreground">
-            Analysis reads every component and connection, then returns questions the team should settle. It will not edit the canvas.
+            Review reads the canvas and asks what the team still has to decide. A conclusion can be applied onto a decision or note.
           </p>
         )}
       </div>
@@ -172,7 +289,8 @@ function ArchitectPane({
         goal={goal}
         mode="global"
         block={null}
-        blockKey={blockKey}
+        blockKey=""
+        refreshToken={chatToken}
       />
     </>
   );
@@ -186,6 +304,8 @@ function ExplorerPane({
   tab,
   setTab,
   blockKey,
+  chatToken,
+  specToken,
 }: {
   editor: Editor | null;
   project: ProjectRecord;
@@ -194,6 +314,8 @@ function ExplorerPane({
   tab: ExplorerTab;
   setTab: (tab: ExplorerTab) => void;
   blockKey: string;
+  chatToken: number;
+  specToken: number;
 }) {
   if (!block || !editor) {
     return (
@@ -222,9 +344,10 @@ function ExplorerPane({
           mode="local"
           block={block}
           blockKey={blockKey}
+          refreshToken={chatToken}
         />
       ) : (
-        <SpecEditor projectId={project.id} editor={editor} block={block} goal={goal} />
+        <SpecEditor projectId={project.id} editor={editor} block={block} goal={goal} refreshToken={specToken} />
       )}
     </>
   );
@@ -283,255 +406,89 @@ function BlockFields({ editor, block }: { editor: Editor; block: NonNullable<Can
   );
 }
 
-function Chat({
-  project,
-  editor,
-  goal,
-  mode,
-  block,
-  blockKey,
-}: {
-  project: ProjectRecord;
-  editor: Editor | null;
-  goal: string;
-  mode: "global" | "local";
-  block: CanvasUi["block"];
-  blockKey: string;
-}) {
-  const [history, setHistory] = useState<{ key: string; messages: ChatMessage[] }>({ key: "", messages: [] });
-  const [draft, setDraft] = useState("");
-  const [streaming, setStreaming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const kind: BlockKind | "global" = block ? block.props.kind : "global";
-  const historyKey = `${project.id}:${blockKey}`;
-  const loadingHistory = history.key !== historyKey;
-  const messages = loadingHistory ? [] : history.messages;
-
-  function setMessages(next: ChatMessage[] | ((current: ChatMessage[]) => ChatMessage[])) {
-    setHistory((current) => {
-      const base = current.key === historyKey ? current.messages : [];
-      const messages = typeof next === "function" ? next(base) : next;
-      return { key: historyKey, messages };
-    });
-  }
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/conversations?projectId=${project.id}&blockId=${encodeURIComponent(blockKey)}`)
-      .then(async (response) => {
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error ?? "Could not load the conversation.");
-        if (!cancelled) setHistory({ key: historyKey, messages: data.messages ?? [] });
-      })
-      .catch((caught: unknown) => {
-        if (cancelled) return;
-        setHistory({ key: historyKey, messages: [] });
-        setError(caught instanceof Error ? caught.message : "Could not load the conversation.");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [project.id, blockKey, historyKey]);
-
-  async function send(text: string) {
-    const content = text.trim();
-    if (!content || !editor || streaming) return;
-    const userMessage: ChatMessage = {
-      id: createId(),
-      role: "user",
-      content,
-      createdAt: timestamp(),
-    };
-    const history = [...messages, userMessage];
-    const assistantId = createId();
-    setMessages(history);
-    setDraft("");
-    setStreaming(true);
-    setError(null);
-    try {
-      const response = await fetch("/api/ai/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId: project.id,
-          mode,
-          projectGoal: goal,
-          canvas: extractCanvas(editor),
-          block: block
-            ? {
-                id: block.id,
-                kind: block.props.kind,
-                title: block.props.title,
-                description: block.props.description,
-              }
-            : null,
-          specification: mode === "local" ? await loadSpecification(project.id, blockKey) : null,
-          messages: history.map((message) => ({ role: message.role, content: message.content })),
-        }),
-      });
-      if (!response.ok || (response.headers.get("content-type") ?? "").includes("application/json")) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error ?? "The architect could not respond.");
-      }
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error("The architect returned an empty response.");
-      const decoder = new TextDecoder();
-      let answer = "";
-      setMessages((current) => [
-        ...current,
-        { id: assistantId, role: "assistant", content: "", createdAt: timestamp() },
-      ]);
-      while (true) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        answer += decoder.decode(chunk.value, { stream: true });
-        const next = answer;
-        setMessages((current) =>
-          current.map((message) => (message.id === assistantId ? { ...message, content: next } : message)),
-        );
-      }
-      const saved = [
-        ...history,
-        { id: assistantId, role: "assistant" as const, content: answer, createdAt: timestamp() },
-      ];
-      setMessages(saved);
-      await fetch("/api/conversations", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: project.id, blockId: blockKey, messages: saved }),
-      });
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The architect could not respond.");
-    } finally {
-      setStreaming(false);
-    }
-  }
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col border-t border-border">
-      <div className="forma-scroll min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
-        {loadingHistory ? <p className="text-xs text-muted-foreground">Loading conversation…</p> : null}
-        {messages.length === 0 && !loadingHistory ? (
-          <div className="grid gap-2">
-            <p className="text-sm leading-6 text-muted-foreground">
-              {mode === "local" && block
-                ? `Let's explore how ${block.props.title} should work.`
-                : "Ask about the system as a whole."}
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {suggestionsFor(kind).map((suggestion) => (
-                <button
-                  key={suggestion}
-                  type="button"
-                  disabled={streaming || !editor}
-                  onClick={() => void send(suggestion)}
-                  className="rounded-full border border-border px-2.5 py-1 text-left text-xs text-muted-foreground hover:border-accent/40 hover:text-foreground disabled:opacity-40"
-                >
-                  {suggestion}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={
-              message.role === "user"
-                ? "ml-6 rounded-xl bg-white/6 px-3 py-2 text-sm leading-6"
-                : "border-l border-accent/50 pl-3 text-sm leading-6 text-foreground/90"
-            }
-          >
-            {message.content ? <MessageBody content={message.content} /> : streaming ? "…" : ""}
-          </div>
-        ))}
-        {error ? <ErrorNote message={error} /> : null}
-      </div>
-      <form
-        className="grid gap-2 border-t border-border p-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void send(draft);
-        }}
-      >
-        <Textarea
-          value={draft}
-          rows={2}
-          placeholder={mode === "local" ? "Ask about this component" : "Ask about the canvas"}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              void send(draft);
-            }
-          }}
-        />
-        <Button type="submit" variant="accent" disabled={streaming || !draft.trim() || !editor}>
-          {streaming ? "Thinking" : "Send"}
-        </Button>
-      </form>
-    </div>
-  );
-}
 
 function SpecEditor({
   projectId,
   editor,
   block,
   goal,
+  refreshToken,
 }: {
   projectId: string;
   editor: Editor;
   block: NonNullable<CanvasUi["block"]>;
   goal: string;
+  refreshToken: number;
 }) {
-  const [loaded, setLoaded] = useState<{ blockId: string; spec: Specification } | null>(null);
-  const [proposal, setProposal] = useState<Specification | null>(null);
-  const [proposalFor, setProposalFor] = useState(block.id);
+  const [sheet, setSheet] = useState<SpecSheet | null>(null);
   const [saving, setSaving] = useState(false);
   const [proposing, setProposing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const loading = !loaded || loaded.blockId !== block.id;
-  const spec = loaded?.blockId === block.id ? loaded.spec : emptySpecification();
+  const current = sheet?.blockId === block.id ? sheet : null;
+  const spec = current ? draftValue(current.draft) : emptySpecification();
+  const proposal = current?.proposal ?? null;
+  const incoming = current?.draft.incoming ?? null;
 
-  if (proposalFor !== block.id) {
-    setProposalFor(block.id);
-    setProposal(null);
-  }
-
-  function setSpec(next: Specification) {
-    setLoaded({ blockId: block.id, spec: next });
+  function update(blockId: string, change: (sheet: SpecSheet) => SpecSheet) {
+    setSheet((value) => (value?.blockId === blockId ? change(value) : value));
   }
 
   useEffect(() => {
     let cancelled = false;
-    loadSpecification(projectId, block.id)
+    const blockId = block.id;
+    readSpecification(projectId, blockId)
       .then((value) => {
-        if (!cancelled) setLoaded({ blockId: block.id, spec: value ?? emptySpecification() });
+        if (cancelled) return;
+        const remote = { value: value.specification ?? emptySpecification(), version: value.updatedAt };
+        setSheet((existing) =>
+          existing?.blockId === blockId
+            ? {
+                ...existing,
+                draft: receiveRemote(existing.draft, remote, existing.draft.edits !== null || existing.proposal !== null),
+              }
+            : { blockId, draft: startDraft(remote), proposal: null },
+        );
       })
       .catch((caught: unknown) => {
         if (cancelled) return;
-        setLoaded({ blockId: block.id, spec: emptySpecification() });
+        setSheet((existing) =>
+          existing?.blockId === blockId
+            ? existing
+            : { blockId, draft: startDraft({ value: emptySpecification(), version: null }), proposal: null },
+        );
         setError(caught instanceof Error ? caught.message : "Could not load the specification.");
       });
     return () => {
       cancelled = true;
     };
-  }, [projectId, block.id]);
+  }, [projectId, block.id, refreshToken]);
 
-  async function save(next: Specification) {
+  async function save() {
+    if (!current) return;
+    const { blockId, draft } = current;
+    const sentProposal = current.proposal;
+    const sentEdits = draft.edits;
+    const next = normalize(sentProposal ?? draftValue(draft));
     setSaving(true);
     setError(null);
     try {
       const response = await fetch("/api/specifications", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, blockId: block.id, specification: next }),
+        body: JSON.stringify({ projectId, blockId, specification: next, expectedUpdatedAt: draft.saved.version }),
       });
       const data = await response.json();
+      if (response.status === 409) {
+        const remote = { value: data.specification ?? emptySpecification(), version: data.updatedAt ?? null };
+        update(blockId, (value) => ({ ...value, draft: receiveRemote(value.draft, remote, true) }));
+        return;
+      }
       if (!response.ok) throw new Error(data.error ?? "Could not save.");
-      setSpec(next);
-      setProposal(null);
+      update(blockId, (value) => ({
+        blockId,
+        draft: markSaved(value.draft, { value: next, version: data.updatedAt ?? null }, sentEdits),
+        proposal: value.proposal === sentProposal ? null : value.proposal,
+      }));
       toast.success("Specification saved");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not save.");
@@ -541,6 +498,7 @@ function SpecEditor({
   }
 
   async function propose() {
+    const blockId = block.id;
     setProposing(true);
     setError(null);
     try {
@@ -562,7 +520,7 @@ function SpecEditor({
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error ?? "Could not draft a specification.");
-      setProposal(data as Specification);
+      update(blockId, (value) => ({ ...value, proposal: data as Specification }));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not draft a specification.");
     } finally {
@@ -570,11 +528,35 @@ function SpecEditor({
     }
   }
 
-  if (loading) return <p className="px-3 py-4 text-xs text-muted-foreground">Loading specification…</p>;
+  if (!current) return <p className="px-3 py-4 text-xs text-muted-foreground">Loading specification…</p>;
 
   const shown = proposal ?? spec;
   return (
     <div className="forma-scroll min-h-0 flex-1 overflow-y-auto px-3 py-3">
+      {incoming ? (
+        <div className="mb-3 rounded-xl border border-[#f0a05a]/30 bg-[#f0a05a]/10 px-3 py-2 text-xs leading-5">
+          A teammate saved this specification after you started editing. Your draft is unchanged.
+          <div className="mt-1.5 flex gap-3">
+            <button
+              type="button"
+              className="text-accent hover:underline"
+              onClick={() => {
+                update(current.blockId, (value) => ({ ...value, draft: takeIncoming(value.draft), proposal: null }));
+                setError(null);
+              }}
+            >
+              Load theirs
+            </button>
+            <button
+              type="button"
+              className="text-accent hover:underline"
+              onClick={() => update(current.blockId, (value) => ({ ...value, draft: keepEdits(value.draft) }))}
+            >
+              Keep my draft
+            </button>
+          </div>
+        </div>
+      ) : null}
       {proposal ? (
         <div className="mb-3 rounded-xl border border-accent/30 bg-accent/10 px-3 py-2 text-xs leading-5 text-accent-foreground">
           This is a proposal. Nothing is saved until you apply it.
@@ -592,8 +574,9 @@ function SpecEditor({
                   ? event.target.value.split("\n")
                   : event.target.value;
                 const next = { ...shown, [field.key]: value };
-                if (proposal) setProposal(next);
-                else setSpec(next);
+                update(current.blockId, (sheet) =>
+                  sheet.proposal ? { ...sheet, proposal: next } : { ...sheet, draft: editDraft(sheet.draft, next) },
+                );
               }}
             />
           </label>
@@ -603,16 +586,16 @@ function SpecEditor({
       <div className="mt-3 grid gap-2">
         {proposal ? (
           <>
-            <Button variant="accent" disabled={saving} onClick={() => void save(normalize(proposal))}>
+            <Button variant="accent" disabled={saving || incoming !== null} onClick={() => void save()}>
               {saving ? "Saving…" : "Apply proposal"}
             </Button>
-            <Button variant="ghost" onClick={() => setProposal(null)}>
+            <Button variant="ghost" onClick={() => update(current.blockId, (value) => ({ ...value, proposal: null }))}>
               Discard
             </Button>
           </>
         ) : (
           <>
-            <Button variant="primary" disabled={saving} onClick={() => void save(normalize(spec))}>
+            <Button variant="primary" disabled={saving || incoming !== null} onClick={() => void save()}>
               {saving ? "Saving…" : "Save specification"}
             </Button>
             <Button variant="quiet" disabled={proposing} onClick={() => void propose()}>
@@ -678,78 +661,41 @@ function ErrorNote({ message }: { message: string }) {
   return <p className="mt-3 rounded-lg border border-[#f0a3a8]/30 bg-[#f0a3a8]/10 px-3 py-2 text-sm leading-5 text-[#f0a3a8]">{message}</p>;
 }
 
-function MessageBody({ content }: { content: string }) {
-  const blocks = content.split(/\n{2,}/);
-  return (
-    <div className="space-y-2">
-      {blocks.map((block, index) => {
-        const lines = block.split("\n").filter((line) => line.trim().length > 0);
-        const list = lines.length > 0 && lines.every((line) => /^(\s*[-*]|\s*\d+[.)])\s+/.test(line));
-        if (list) {
-          return (
-            <ul key={index} className="list-disc space-y-1 pl-4">
-              {lines.map((line, lineIndex) => (
-                <li key={lineIndex}>{inlineText(line.replace(/^(\s*[-*]|\s*\d+[.)])\s+/, ""))}</li>
-              ))}
-            </ul>
-          );
-        }
-        return (
-          <p key={index} className="whitespace-pre-wrap">
-            {lines.map((line, lineIndex) => (
-              <span key={lineIndex}>
-                {lineIndex > 0 ? <br /> : null}
-                {inlineText(line)}
-              </span>
-            ))}
-          </p>
-        );
-      })}
-    </div>
-  );
-}
-
-function inlineText(text: string) {
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
-  return parts.map((part, index) =>
-    part.startsWith("**") && part.endsWith("**") ? (
-      <strong key={index} className="font-medium">
-        {part.slice(2, -2)}
-      </strong>
-    ) : (
-      <span key={index}>{part}</span>
-    ),
-  );
-}
-
-function timestamp() {
-  return Date.now();
-}
-
-function createId() {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-async function updateGoal(projectId: string, goal: string) {
+async function saveGoal(projectId: string, draft: Draft<string>, setGoal: Dispatch<SetStateAction<Draft<string>>>) {
+  const sent = draft.edits;
+  if (sent === null) return;
   const { updateProject } = await import("@/app/actions");
-  const result = await updateProject({ id: projectId, goal });
-  if (result?.error) toast.error(result.error);
+  const result = await updateProject({ id: projectId, goal: sent, expectedGoal: draft.saved.value });
+  if ("error" in result) {
+    toast.error(result.error);
+    return;
+  }
+  const saved = { value: result.goal, version: null };
+  if ("conflict" in result) setGoal((current) => receiveRemote(current, saved, true));
+  else setGoal((current) => markSaved(current, saved, sent));
 }
 
-async function loadSpecification(projectId: string, blockId: string) {
-  if (!blockId) return null;
-  const response = await fetch(
-    `/api/specifications?projectId=${projectId}&blockId=${encodeURIComponent(blockId)}`,
-  );
+async function readSpecification(projectId: string, blockId: string) {
+  const response = await fetch(`/api/specifications?projectId=${projectId}&blockId=${encodeURIComponent(blockId)}`);
   const data = await response.json();
   if (!response.ok) throw new Error(data.error ?? "Could not load the specification.");
-  return (data.specification ?? null) as Specification | null;
+  return {
+    specification: (data.specification ?? null) as Specification | null,
+    updatedAt: (data.updatedAt ?? null) as number | null,
+  };
 }
+
+type Review = {
+  summary: string;
+  findings: Finding[];
+  canvasProposals: CanvasProposal[];
+};
+
+type SpecSheet = {
+  blockId: string;
+  draft: Draft<Specification>;
+  proposal: Specification | null;
+};
 
 function focusBlock(editor: Editor | null, id: string | null) {
   if (!editor || !id) return;

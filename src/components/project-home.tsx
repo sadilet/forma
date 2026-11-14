@@ -103,7 +103,7 @@ export function ProjectHome({ user, projects }: { user: SessionUser; projects: P
             Name
             <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Checkout" autoFocus />
           </label>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             <TemplateChoice
               selected={template === "blank"}
               title="Blank"
@@ -121,6 +121,12 @@ export function ProjectHome({ user, projects }: { user: SessionUser; projects: P
               title="Meeting Notes"
               detail="Sample product"
               onClick={() => setTemplate("meetings")}
+            />
+            <TemplateChoice
+              selected={template === "slotguard"}
+              title="SlotGuard"
+              detail="Sample product"
+              onClick={() => setTemplate("slotguard")}
             />
           </div>
           {error ? <p className="text-sm text-[#f0a3a8]">{error}</p> : null}

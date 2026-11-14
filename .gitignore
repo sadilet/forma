@@ -33,6 +33,14 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example
+!.env.deploy.example
+
+# Google Cloud CLI, unpacked or downloaded into the project folder
+/google-cloud-sdk/
+/google-cloud-cli-*.tar.gz
+
+# deploy module: generated project repos, logs, and scratch space
+/data/deploy/
 
 # local database
 /data/*.db

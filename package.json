@@ -11,6 +11,9 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test src/lib/collab/messages.test.ts src/lib/collab/sync.test.ts src/lib/collab/draft.test.ts src/lib/research/citations.test.ts src/lib/research/competitors.test.ts src/lib/research/locale.test.ts src/lib/research/proposals.test.ts",
+    "test:deploy": "node --experimental-strip-types --test src/lib/deploy/*.test.ts",
+    "deploy:worker": "node --experimental-strip-types --env-file-if-exists=.env.local --env-file-if-exists=.env.deploy scripts/deploy-worker.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
@@ -31,6 +34,7 @@
     "better-sqlite3": "^12.11.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "context.dev": "^3.29.0",
     "drizzle-orm": "^0.45.4",
     "lucide-react": "^1.72.0",
     "next": "16.4.6",
