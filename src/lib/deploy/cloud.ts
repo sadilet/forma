@@ -1,11 +1,13 @@
 import { randomBytes } from "node:crypto";
 
-// What it takes to run Forma itself on Cloud Run: the settings for the web service and for the deploy worker.
-// This file only decides values. scripts/cloud-deploy.ts does the calls to Google Cloud.
+// What it takes to run Forma itself on Cloud Run: the settings for the web service, the deploy worker,
+// and the Gemini Live voice relay. This file only decides values. scripts/cloud-deploy.ts does the calls.
 
 export class CloudConfigError extends Error {}
 
 type Env = Record<string, string | undefined>;
+
+export type CloudTarget = "web" | "worker" | "voice";
 
 export type CloudPlan = {
   project: string;
@@ -15,6 +17,7 @@ export type CloudPlan = {
   registry: string; // Artifact Registry repository name
   web: { service: string; env: Record<string, string> };
   worker: { service: string; env: Record<string, string> };
+  voice: { service: string; env: Record<string, string> };
   // Set when the session secret did not exist yet and was made up. The caller should save it.
   generatedSessionSecret: string | null;
 };
@@ -26,11 +29,12 @@ const AI_KEYS = [
   "GEMINI_API_KEY",
   "GOOGLE_API_KEY",
   "GEMINI_MODEL",
+  "GEMINI_LIVE_MODEL",
   "OPENAI_API_KEY",
   "OPENAI_MODEL",
   "AI_PROVIDER",
 ];
-const WEB_ONLY = ["CONTEXT_DEV_API_KEY", "LIVEBLOCKS_SECRET_KEY", "PRODUCT_VIDEO_URL"];
+const WEB_ONLY = ["CONTEXT_DEV_API_KEY", "LIVEBLOCKS_SECRET_KEY", "PRODUCT_VIDEO_URL", "VOICE_RELAY_URL"];
 const WORKER_SETTINGS = [
   "DEPLOY_BUILDER",
   "DEPLOY_MODEL",
@@ -57,6 +61,16 @@ function pick(env: Env, names: string[]) {
 // started with --add-cloudsql-instances. No IP address, no allow-list and no certificate to manage.
 export function cloudDatabaseUrl(instance: string, database: string, password: string, user = "postgres") {
   return `postgres://${encodeURIComponent(user)}:${encodeURIComponent(password)}@/${encodeURIComponent(database)}?host=/cloudsql/${instance}`;
+}
+
+/** Cloud Run gives https://…; the browser needs wss://… for the voice WebSocket. */
+export function voiceRelayPublicUrl(httpsUrl: string) {
+  const trimmed = httpsUrl.trim().replace(/\/$/, "");
+  if (!trimmed) return "";
+  if (trimmed.startsWith("wss://") || trimmed.startsWith("ws://")) return trimmed;
+  if (trimmed.startsWith("https://")) return `wss://${trimmed.slice("https://".length)}`;
+  if (trimmed.startsWith("http://")) return `ws://${trimmed.slice("http://".length)}`;
+  return `wss://${trimmed}`;
 }
 
 export function planCloud(env: Env): CloudPlan {
@@ -86,6 +100,7 @@ export function planCloud(env: Env): CloudPlan {
 
   const databaseUrl = cloudDatabaseUrl(instance, database, password, user);
   const shared = { DATABASE_URL: databaseUrl, ...pick(env, AI_KEYS) };
+  const voiceKeys = pick(env, ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_LIVE_MODEL"]);
 
   return {
     project,
@@ -106,6 +121,11 @@ export function planCloud(env: Env): CloudPlan {
         ...pick(env, WORKER_SETTINGS),
       },
     },
+    voice: {
+      service: (env.FORMA_VOICE_SERVICE ?? "").trim() || "forma-voice",
+      // Same SESSION_SECRET as the web app so tickets minted by /api/voice/token verify here.
+      env: { ...voiceKeys, SESSION_SECRET: sessionSecret },
+    },
     generatedSessionSecret,
   };
 }
@@ -115,6 +135,6 @@ export function envFileContents(env: Record<string, string>) {
   return `${JSON.stringify(env, null, 2)}\n`;
 }
 
-export function imageName(plan: CloudPlan, target: "web" | "worker", tag: string) {
+export function imageName(plan: CloudPlan, target: CloudTarget, tag: string) {
   return `${plan.region}-docker.pkg.dev/${plan.project}/${plan.registry}/${target}:${tag}`;
 }

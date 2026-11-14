@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CloudConfigError, cloudDatabaseUrl, envFileContents, imageName, planCloud } from "./cloud.ts";
+import { CloudConfigError, cloudDatabaseUrl, envFileContents, imageName, planCloud, voiceRelayPublicUrl } from "./cloud.ts";
 
 const base = { GCP_PROJECT_ID: "junction26hel-7607", POSTGRES_PASSWORD: "pw", SESSION_SECRET: "a-real-secret" };
 
@@ -18,9 +18,17 @@ test("the plan fills in the instance, database, and service names", () => {
   assert.equal(plan.database, "forma");
   assert.equal(plan.web.service, "forma");
   assert.equal(plan.worker.service, "forma-worker");
+  assert.equal(plan.voice.service, "forma-voice");
   assert.equal(plan.web.env.DATABASE_URL, "postgres://postgres:pw@/forma?host=/cloudsql/junction26hel-7607:europe-north1:forma");
   assert.equal(plan.web.env.DATABASE_URL, plan.worker.env.DATABASE_URL);
+  assert.equal(plan.voice.env.SESSION_SECRET, "a-real-secret");
   assert.equal(plan.generatedSessionSecret, null);
+});
+
+test("Cloud Run https URLs become wss for the browser", () => {
+  assert.equal(voiceRelayPublicUrl("https://forma-voice-abc.run.app"), "wss://forma-voice-abc.run.app");
+  assert.equal(voiceRelayPublicUrl("https://forma-voice-abc.run.app/"), "wss://forma-voice-abc.run.app");
+  assert.equal(voiceRelayPublicUrl("wss://already.example"), "wss://already.example");
 });
 
 test("each service gets only what it needs", () => {
@@ -47,6 +55,10 @@ test("each service gets only what it needs", () => {
   assert.equal(plan.worker.env.GCLOUD_BIN, undefined, "a path on this laptop means nothing in the cloud");
   assert.equal(plan.worker.env.DEPLOY_DRY_RUN, undefined, "a dry run must never reach the cloud worker");
   assert.equal(plan.worker.env.GCP_PROJECT_ID, "junction26hel-7607");
+  assert.equal(plan.voice.env.GEMINI_API_KEY, "g");
+  assert.equal(plan.voice.env.SESSION_SECRET, "a-real-secret", "tickets must verify with the same secret as the web app");
+  assert.equal(plan.voice.env.DATABASE_URL, undefined, "the relay does not talk to Postgres");
+  assert.equal(plan.voice.env.LIVEBLOCKS_SECRET_KEY, undefined);
 });
 
 test("empty values are not sent", () => {

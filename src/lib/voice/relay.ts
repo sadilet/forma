@@ -1,3 +1,4 @@
+import http from "node:http";
 import { GoogleGenAI, Modality, type Session } from "@google/genai";
 import { WebSocketServer, type WebSocket } from "ws";
 import { DEFAULT_LIVE_MODEL, LIVE_INPUT_AUDIO_MIME, LIVE_VIDEO_MIME, parseClientMessage, type RelayMessage } from "./protocol.ts";
@@ -20,8 +21,14 @@ export function startVoiceRelay(options: RelayOptions) {
   const model = options.model?.trim() || DEFAULT_LIVE_MODEL;
   const log = options.log ?? (() => undefined);
   const ai = new GoogleGenAI({ apiKey: options.apiKey, httpOptions: { apiVersion: "v1beta" } });
-  const wss = new WebSocketServer({ port: options.port, host: options.host, maxPayload: 8 * 1024 * 1024 });
+  // An HTTP server answers Cloud Run's port check; WebSocket upgrades ride on the same listener.
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+    response.end("ok");
+  });
+  const wss = new WebSocketServer({ server, maxPayload: 8 * 1024 * 1024 });
   const usedTickets = new Map<string, number>();
+  server.listen(options.port, options.host);
 
   wss.on("connection", (socket, request) => {
     const url = new URL(request.url ?? "/", "http://relay");
@@ -133,7 +140,9 @@ export function startVoiceRelay(options: RelayOptions) {
     close: () =>
       new Promise<void>((resolve) => {
         for (const client of wss.clients as Set<WebSocket>) client.close(1001, "Relay stopping");
-        wss.close(() => resolve());
+        wss.close(() => {
+          server.close(() => resolve());
+        });
       }),
   };
 }

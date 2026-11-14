@@ -11,14 +11,15 @@ if (!apiKey) {
   process.exit(1);
 }
 
-const port = Number(process.env.VOICE_RELAY_PORT) || DEFAULT_RELAY_PORT;
+// Cloud Run sets PORT. Locally VOICE_RELAY_PORT (default 8787) keeps the old habit.
+const port = Number(process.env.PORT) || Number(process.env.VOICE_RELAY_PORT) || DEFAULT_RELAY_PORT;
 const model = process.env.GEMINI_LIVE_MODEL?.trim() || DEFAULT_LIVE_MODEL;
 const relay = startVoiceRelay({
   port,
   apiKey,
   model,
   secret: sessionSecret(),
-  host: process.env.VOICE_RELAY_HOST?.trim() || undefined,
+  host: process.env.VOICE_RELAY_HOST?.trim() || "0.0.0.0",
   log: (line) => console.log(`[voice] ${line}`),
 });
 

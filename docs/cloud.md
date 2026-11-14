@@ -1,16 +1,18 @@
 # Running Forma itself on Google Cloud
 
-Forma is two services on Cloud Run that share one Postgres database (Cloud SQL):
+Forma is three services on Cloud Run. The web app and the worker share one Postgres database (Cloud SQL); the voice relay does not need a database:
 
 ```
  browser ──► forma          (Next.js, scales 0–5 instances)  ─┐
-                                                              ├──► Cloud SQL Postgres, database "forma"
+         └──► forma-voice   (Gemini Live WebSocket relay)      ├──► Cloud SQL Postgres, database "forma"
  Deploy button ► queue ──►  forma-worker  (always on, 1 instance)
                               └─ writes an app from the canvas, builds it, runs it on Cloud Run
                                  as its own service (see deploy.md)
 ```
 
 The web app and the worker never talk to each other. The web app puts a job in the `deploy_jobs` table, the worker takes it from there, and the web app reads the progress from `deploy_events`. That is why they can run anywhere, including one on a laptop and one in the cloud.
+
+Voice: the browser gets a short-lived ticket from the web app, then opens a WebSocket to `forma-voice`. `cloud:deploy` ships the relay first, reads its HTTPS URL, converts it to `wss://…`, saves it as `VOICE_RELAY_URL` in `.env.cloud`, and passes that into the web service.
 
 ## Put it online
 
@@ -22,7 +24,8 @@ POSTGRES_PASSWORD=<password of the Cloud SQL user "postgres">
 ```
 
 ```bash
-npm run cloud:deploy              # both services
+npm run cloud:deploy              # voice, then web (with VOICE_RELAY_URL), then worker
+npm run cloud:deploy -- voice     # only the Gemini Live relay; writes VOICE_RELAY_URL into .env.cloud
 npm run cloud:deploy -- web       # only the web app
 npm run cloud:deploy -- worker    # only the deploy worker
 ```
@@ -31,12 +34,12 @@ The script turns on the APIs it needs, creates the database `forma` and an image
 
 What each service receives as settings (see `src/lib/deploy/cloud.ts`):
 
-| | forma (web) | forma-worker |
-| --- | --- | --- |
-| Database | `DATABASE_URL` through a Cloud SQL socket | same |
-| Login cookie | `SESSION_SECRET`, made once and kept in `.env.cloud` | not needed |
-| AI keys | `GEMINI_*`, `OPENAI_*`, `AI_PROVIDER` from `.env.local` | same, to write the apps |
-| Other | `LIVEBLOCKS_SECRET_KEY`, `CONTEXT_DEV_API_KEY`, `PRODUCT_VIDEO_URL` | `DEPLOY_*` from `.env.deploy`, `GCP_PROJECT_ID`, `GCP_REGION` |
+| | forma (web) | forma-worker | forma-voice |
+| --- | --- | --- | --- |
+| Database | `DATABASE_URL` through a Cloud SQL socket | same | not needed |
+| Login / tickets | `SESSION_SECRET`, made once and kept in `.env.cloud` | not needed | same `SESSION_SECRET` (verifies voice tickets) |
+| AI keys | `GEMINI_*`, `OPENAI_*`, `AI_PROVIDER` from `.env.local` | same, to write the apps | `GEMINI_API_KEY`, `GEMINI_LIVE_MODEL` |
+| Other | `LIVEBLOCKS_SECRET_KEY`, `CONTEXT_DEV_API_KEY`, `PRODUCT_VIDEO_URL`, `VOICE_RELAY_URL` | `DEPLOY_*` from `.env.deploy`, `GCP_PROJECT_ID`, `GCP_REGION` | — |
 
 Settings are passed to Cloud Run as environment variables from a file with owner-only access, not on the command line. Anyone with access to the Google Cloud project can read them in the console. For anything beyond a hackathon, move the keys to Secret Manager.
 

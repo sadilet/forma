@@ -1,6 +1,7 @@
-// Puts Forma itself on Cloud Run: the web app and the deploy worker. See docs/cloud.md.
+// Puts Forma itself on Cloud Run: the web app, the deploy worker, and the voice relay. See docs/cloud.md.
 //
-//   npm run cloud:deploy              both services
+//   npm run cloud:deploy              voice, then web (with VOICE_RELAY_URL filled in), then worker
+//   npm run cloud:deploy -- voice     only the Gemini Live relay; writes VOICE_RELAY_URL into .env.cloud
 //   npm run cloud:deploy -- web       only the web app
 //   npm run cloud:deploy -- worker    only the deploy worker
 //
@@ -11,7 +12,14 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CloudConfigError, envFileContents, imageName, planCloud } from "../src/lib/deploy/cloud.ts";
+import {
+  CloudConfigError,
+  envFileContents,
+  imageName,
+  planCloud,
+  voiceRelayPublicUrl,
+  type CloudTarget,
+} from "../src/lib/deploy/cloud.ts";
 import type { CloudPlan } from "../src/lib/deploy/cloud.ts";
 
 for (const file of [".env.cloud", ".env.local", ".env.deploy"]) {
@@ -22,10 +30,14 @@ const gcloudBin = process.env.GCLOUD_BIN?.trim() || "gcloud";
 
 const targets = process.argv.slice(2).filter((arg) => !arg.startsWith("-"));
 for (const target of targets) {
-  if (target !== "web" && target !== "worker" && target !== "all") fail(`Unknown target "${target}". Use web, worker or all.`);
+  if (target !== "web" && target !== "worker" && target !== "voice" && target !== "all") {
+    fail(`Unknown target "${target}". Use web, worker, voice or all.`);
+  }
 }
-const wantWeb = targets.length === 0 || targets.includes("all") || targets.includes("web");
-const wantWorker = targets.length === 0 || targets.includes("all") || targets.includes("worker");
+const wantAll = targets.length === 0 || targets.includes("all");
+const wantVoice = wantAll || targets.includes("voice");
+const wantWeb = wantAll || targets.includes("web");
+const wantWorker = wantAll || targets.includes("worker");
 
 function fail(message: string): never {
   console.error(`\n${message}`);
@@ -74,6 +86,31 @@ if (plan.generatedSessionSecret) {
 const projectArgs = ["--project", plan.project];
 const regionArgs = ["--region", plan.region];
 
+function rememberVoiceRelayUrl(wssUrl: string) {
+  plan.web.env.VOICE_RELAY_URL = wssUrl;
+  process.env.VOICE_RELAY_URL = wssUrl;
+  const file = ".env.cloud";
+  const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+  if (/^VOICE_RELAY_URL=/m.test(existing)) {
+    fs.writeFileSync(file, existing.replace(/^VOICE_RELAY_URL=.*$/m, `VOICE_RELAY_URL=${wssUrl}`), { mode: 0o600 });
+  } else {
+    fs.appendFileSync(
+      file,
+      `${existing.endsWith("\n") || !existing ? "" : "\n"}# Public WebSocket URL of forma-voice. Filled in by npm run cloud:deploy.\nVOICE_RELAY_URL=${wssUrl}\n`,
+      { mode: 0o600 },
+    );
+  }
+}
+
+async function serviceHttpsUrl(serviceName: string) {
+  const url = await gcloud(
+    ["run", "services", "describe", serviceName, "--format=value(status.url)", ...regionArgs, ...projectArgs],
+    { capture: true },
+  );
+  if (url.code !== 0) return "";
+  return url.out.trim();
+}
+
 async function main() {
   console.log(`Project ${plan.project}, region ${plan.region}, database ${plan.database} on ${plan.instance}.`);
 
@@ -88,14 +125,16 @@ async function main() {
     "Turning on the services",
   );
 
-  step(`Making sure the database "${plan.database}" exists`);
-  const instanceName = plan.instance.split(":")[2];
-  const databases = await gcloud(["sql", "databases", "list", "--instance", instanceName, "--format=value(name)", ...projectArgs], { capture: true });
-  if (databases.code !== 0) fail(`Could not read the databases of ${plan.instance}:\n${databases.out}`);
-  if (databases.out.split("\n").map((line) => line.trim()).includes(plan.database)) {
-    console.log("It exists.");
-  } else {
-    await gcloudOrFail(["sql", "databases", "create", plan.database, "--instance", instanceName, ...projectArgs], "Creating the database");
+  if (wantWeb || wantWorker) {
+    step(`Making sure the database "${plan.database}" exists`);
+    const instanceName = plan.instance.split(":")[2];
+    const databases = await gcloud(["sql", "databases", "list", "--instance", instanceName, "--format=value(name)", ...projectArgs], { capture: true });
+    if (databases.code !== 0) fail(`Could not read the databases of ${plan.instance}:\n${databases.out}`);
+    if (databases.out.split("\n").map((line) => line.trim()).includes(plan.database)) {
+      console.log("It exists.");
+    } else {
+      await gcloudOrFail(["sql", "databases", "create", plan.database, "--instance", instanceName, ...projectArgs], "Creating the database");
+    }
   }
 
   step("Making sure the image repository exists");
@@ -110,12 +149,36 @@ async function main() {
   }
 
   const tag = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+
+  // Voice first so its public URL can be handed to the web app as VOICE_RELAY_URL.
+  if (wantVoice) {
+    if (!plan.voice.env.GEMINI_API_KEY && !plan.voice.env.GOOGLE_API_KEY) {
+      fail("Voice relay needs GEMINI_API_KEY (or GOOGLE_API_KEY). Add it to .env.local and run again.");
+    }
+    await ship("voice", tag);
+    const httpsUrl = await serviceHttpsUrl(plan.voice.service);
+    if (!httpsUrl) fail(`Could not read the URL of ${plan.voice.service} after deploy.`);
+    const wssUrl = voiceRelayPublicUrl(httpsUrl);
+    rememberVoiceRelayUrl(wssUrl);
+    console.log(`Saved VOICE_RELAY_URL=${wssUrl} in .env.cloud for the web app.`);
+  } else if (wantWeb && !plan.web.env.VOICE_RELAY_URL) {
+    // Web-only redeploy: reuse an already-running relay if one exists.
+    const httpsUrl = await serviceHttpsUrl(plan.voice.service);
+    if (httpsUrl) {
+      const wssUrl = voiceRelayPublicUrl(httpsUrl);
+      rememberVoiceRelayUrl(wssUrl);
+      console.log(`Using existing voice relay at ${wssUrl}.`);
+    } else {
+      console.log("No VOICE_RELAY_URL yet. Voice will not work until you run: npm run cloud:deploy -- voice");
+    }
+  }
+
   if (wantWeb) await ship("web", tag);
   if (wantWorker) await ship("worker", tag);
   console.log("\nDone.");
 }
 
-async function ship(target: "web" | "worker", tag: string) {
+async function ship(target: CloudTarget, tag: string) {
   const service = plan[target];
   const image = imageName(plan, target, tag);
 
@@ -145,8 +208,6 @@ async function ship(target: "web" | "worker", tag: string) {
       service.service,
       "--image",
       image,
-      "--add-cloudsql-instances",
-      plan.instance,
       "--env-vars-file",
       envFile,
       "--port",
@@ -155,19 +216,70 @@ async function ship(target: "web" | "worker", tag: string) {
       ...regionArgs,
       ...projectArgs,
     ];
-    const web = ["--allow-unauthenticated", "--memory", "1Gi", "--cpu", "1", "--min-instances", "0", "--max-instances", "5", "--concurrency", "40"];
+    const web = [
+      "--allow-unauthenticated",
+      "--add-cloudsql-instances",
+      plan.instance,
+      "--memory",
+      "1Gi",
+      "--cpu",
+      "1",
+      "--min-instances",
+      "0",
+      "--max-instances",
+      "5",
+      "--concurrency",
+      "40",
+    ];
     // The worker has to keep running between requests, so it gets its CPU all the time and exactly one instance.
-    const worker = ["--no-allow-unauthenticated", "--no-cpu-throttling", "--memory", "2Gi", "--cpu", "2", "--min-instances", "1", "--max-instances", "1", "--timeout", "3600"];
-    await gcloudOrFail([...common, ...(target === "web" ? web : worker)], `Starting the ${target} service`);
+    const worker = [
+      "--no-allow-unauthenticated",
+      "--add-cloudsql-instances",
+      plan.instance,
+      "--no-cpu-throttling",
+      "--memory",
+      "2Gi",
+      "--cpu",
+      "2",
+      "--min-instances",
+      "1",
+      "--max-instances",
+      "1",
+      "--timeout",
+      "3600",
+    ];
+    // Long-lived WebSockets; ticket auth, no Cloud SQL.
+    const voice = [
+      "--allow-unauthenticated",
+      "--memory",
+      "512Mi",
+      "--cpu",
+      "1",
+      "--min-instances",
+      "0",
+      "--max-instances",
+      "5",
+      "--concurrency",
+      "40",
+      "--timeout",
+      "3600",
+      "--session-affinity",
+    ];
+    const extra = target === "web" ? web : target === "worker" ? worker : voice;
+    await gcloudOrFail([...common, ...extra], `Starting the ${target} service`);
   } finally {
     fs.rmSync(path.dirname(envFile), { recursive: true, force: true });
   }
 
-  const url = await gcloud(["run", "services", "describe", service.service, "--format=value(status.url)", ...regionArgs, ...projectArgs], { capture: true });
-  console.log(`\n${target}: ${url.out.trim()}`);
+  const url = await serviceHttpsUrl(service.service);
+  console.log(`\n${target}: ${url}`);
   if (target === "web") {
-    const answer = await fetch(url.out.trim()).then((res) => res.status).catch(() => 0);
+    const answer = await fetch(url).then((res) => res.status).catch(() => 0);
     console.log(answer >= 200 && answer < 400 ? `The app answers (HTTP ${answer}).` : `The app did not answer yet (HTTP ${answer}). Check: gcloud run services logs read ${service.service} --region ${plan.region}`);
+  }
+  if (target === "voice") {
+    const answer = await fetch(url).then((res) => res.status).catch(() => 0);
+    console.log(answer === 200 ? `The relay answers (HTTP ${answer}).` : `The relay did not answer yet (HTTP ${answer}).`);
   }
 }
 

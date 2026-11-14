@@ -1,7 +1,8 @@
-# One Dockerfile, two images (see docs/cloud.md):
+# One Dockerfile, three images (see docs/cloud.md):
 #   docker build --target web    -t forma-web .       the Forma app (Next.js)
 #   docker build --target worker -t forma-worker .    the deploy worker (builds apps and ships them to Cloud Run)
-# scripts/cloud-deploy.ts builds both with Cloud Build, so Docker is not needed on your machine.
+#   docker build --target voice  -t forma-voice .     Gemini Live WebSocket relay
+# scripts/cloud-deploy.ts builds them with Cloud Build, so Docker is not needed on your machine.
 
 FROM node:26-slim AS deps
 WORKDIR /app
@@ -48,3 +49,15 @@ RUN mkdir -p /app/data/deploy /home/node/.config && chown -R node:node /app/data
 USER node
 # Cloud Run only starts containers that listen on $PORT. The worker answers a plain "ok" there and does its real work in the background.
 CMD ["node", "--experimental-strip-types", "scripts/deploy-worker.ts"]
+
+# ---- voice: Gemini Live relay (holds GEMINI_API_KEY; browsers connect with a short-lived ticket) -----------------
+FROM node:26-slim AS voice
+WORKDIR /app
+ENV NODE_ENV=production HOSTNAME=0.0.0.0 PORT=8080
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+COPY --chown=node:node src/lib/voice ./src/lib/voice
+COPY --chown=node:node scripts/voice-relay.ts ./scripts/voice-relay.ts
+USER node
+EXPOSE 8080
+CMD ["node", "--experimental-strip-types", "scripts/voice-relay.ts"]
