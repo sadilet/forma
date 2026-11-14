@@ -14,7 +14,7 @@ export default async function WorkspacePage({
   const user = await getCurrentUser();
   const { projectId } = await params;
   if (!user) redirect(`/?next=${encodeURIComponent(`/w/${projectId}`)}`);
-  const project = getProject(projectId);
+  const project = await getProject(projectId);
   if (!project) notFound();
 
   return (

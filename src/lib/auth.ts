@@ -67,7 +67,7 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
   const cookieStore = await cookies();
   const userId = readToken(cookieStore.get(COOKIE)?.value);
   if (!userId) return null;
-  const user = getUserById(userId);
+  const user = await getUserById(userId);
   if (!user) return null;
   return { id: user.id, name: user.name, email: user.email, color: user.color };
 }

@@ -4,9 +4,9 @@ import { describeCitations } from "@/lib/research/citations";
 import type { LeadSession, MarketReport } from "@/lib/research/schemas";
 import { latestResearchArtifact, listLeads, type StoredArtifact } from "@/lib/records";
 
-export function researchPrompt(projectId: string, mode: "global" | "local" | "market" | "leads") {
-  if (mode === "market") return marketPrompt(latestResearchArtifact(projectId, "market"));
-  if (mode === "leads") return leadPrompt(projectId, latestResearchArtifact(projectId, "leads"));
+export async function researchPrompt(projectId: string, mode: "global" | "local" | "market" | "leads") {
+  if (mode === "market") return marketPrompt(await latestResearchArtifact(projectId, "market"));
+  if (mode === "leads") return await leadPrompt(projectId, await latestResearchArtifact(projectId, "leads"));
   return "";
 }
 
@@ -23,8 +23,8 @@ function marketPrompt(artifact: StoredArtifact | null) {
   ].join("\n");
 }
 
-function leadPrompt(projectId: string, artifact: StoredArtifact | null) {
-  const leads = listLeads(projectId);
+async function leadPrompt(projectId: string, artifact: StoredArtifact | null) {
+  const leads = await listLeads(projectId);
   if (leads.length === 0) return "No leads are saved yet. Say so, and do not invent people.";
   const session = artifact && isLeadSession(artifact) ? artifact.content : null;
   return [

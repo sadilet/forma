@@ -4,19 +4,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
-import Database from "better-sqlite3";
 import type { CanvasSnapshot } from "../ai/schemas.ts";
 import { repoDirFor } from "./build.ts";
 import { ConfigError, loadConfig } from "./config.ts";
-import { ensureDeployTables } from "./db.ts";
 import { runJob } from "./pipeline.ts";
 import type { PipelineDeps } from "./pipeline.ts";
 import { publishRelease, syncFromRemote, branchFor, displayRemote, sshCommand } from "./publish.ts";
 import { claimJob, enqueueJob, listEvents } from "./queue.ts";
 import { answerOf, appFiles, fakeLlm } from "./test-app.ts";
+import { closeMemoryDb, memoryDb } from "./test-db.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forma-publish-test-"));
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+after(closeMemoryDb);
 
 const env = {
   ...process.env,
@@ -70,19 +70,19 @@ const logger = () => {
 
 // ---- Pure helpers ------------------------------------------------------------------------------------------------
 
-test("a project branch is always a safe branch name", () => {
+test("a project branch is always a safe branch name", async () => {
   assert.equal(branchFor("project-slotguard"), "project-slotguard");
   assert.equal(branchFor("a/b c..d"), "a_b_c__d");
   assert.equal(branchFor(""), "project");
   assert.equal(branchFor("x".repeat(200)).length, 80);
 });
 
-test("a token in the remote address is never logged", () => {
+test("a token in the remote address is never logged", async () => {
   assert.equal(displayRemote("https://sadilet:ghp_secret@github.com/sadilet/forma-examples.git"), "https://github.com/sadilet/forma-examples.git");
   assert.equal(displayRemote("git@github.com:sadilet/forma-examples.git"), "git@github.com:sadilet/forma-examples.git");
 });
 
-test("the ssh command quotes the key path, whatever is in it", () => {
+test("the ssh command quotes the key path, whatever is in it", async () => {
   assert.equal(sshCommand(null), null);
   const command = sshCommand("/Users/a b/it's key")!;
   assert.match(command, /^ssh -i '\/Users\/a b\/it'\\''s key' -o IdentitiesOnly=yes /);
@@ -90,7 +90,7 @@ test("the ssh command quotes the key path, whatever is in it", () => {
   assert.match(command, /BatchMode=yes/);
 });
 
-test("the remote and the key are checked when the worker starts", () => {
+test("the remote and the key are checked when the worker starts", async () => {
   const dir = fs.mkdtempSync(path.join(tmp, "keys-"));
   const key = path.join(dir, "key");
   fs.writeFileSync(key, "not a real key");
@@ -266,13 +266,12 @@ test("a deploy saves the release, and a second machine carries on from it withou
     llm: () => llm,
   });
   const deploy = async (llm: ReturnType<typeof fakeLlm>) => {
-    const db = new Database(":memory:");
-    ensureDeployTables(db);
+    const db = await memoryDb();
     const config = configFor(bare, { DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "agent" });
-    enqueueJob(db, { projectId: "project-taskflow", requestedBy: "u", template: "taskflow", serviceName: "forma-project-taskflow", snapshot: canvas, goal: "A tiny product." });
-    const job = claimJob(db, "w1")!;
+    await enqueueJob(db, { projectId: "project-taskflow", requestedBy: "u", template: "taskflow", serviceName: "forma-project-taskflow", snapshot: canvas, goal: "A tiny product." });
+    const job = (await claimJob(db, "w1"))!;
     const outcome = await runJob({ db, config, job, workerId: "w1", signal: new AbortController().signal, deps: deps(llm) });
-    return { outcome, config, log: listEvents(db, job.id).map((event) => event.message) };
+    return { outcome, config, log: (await listEvents(db, job.id)).map((event) => event.message) };
   };
 
   const first = fakeLlm([answerOf(appFiles("Home"))]);
@@ -294,11 +293,10 @@ test("a deploy saves the release, and a second machine carries on from it withou
 });
 
 test("a push that fails does not fail the deploy", { skip }, async () => {
-  const db = new Database(":memory:");
-  ensureDeployTables(db);
+  const db = await memoryDb();
   const config = configFor(path.join(tmp, "never.git"), { DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "agent" });
-  enqueueJob(db, { projectId: "project-x", requestedBy: "u", template: "blank", serviceName: "forma-project-x", snapshot: canvas, goal: "" });
-  const job = claimJob(db, "w1")!;
+  await enqueueJob(db, { projectId: "project-x", requestedBy: "u", template: "blank", serviceName: "forma-project-x", snapshot: canvas, goal: "" });
+  const job = (await claimJob(db, "w1"))!;
   const outcome = await runJob({
     db,
     config,
@@ -308,7 +306,7 @@ test("a push that fails does not fail the deploy", { skip }, async () => {
     deps: { ship: async () => ({ url: "", revision: "" }), health: async () => true, sleep: async () => undefined, llm: () => fakeLlm([answerOf(appFiles())]) },
   });
   assert.equal(outcome, "succeeded");
-  const warnings = listEvents(db, job.id).filter((event) => event.level === "warn").map((event) => event.message);
+  const warnings = (await listEvents(db, job.id)).filter((event) => event.level === "warn").map((event) => event.message);
   assert.ok(warnings.some((message) => /Could not read/.test(message)));
   assert.ok(warnings.some((message) => /was not saved to/.test(message)));
 });

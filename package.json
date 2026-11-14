@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test src/lib/collab/messages.test.ts src/lib/collab/sync.test.ts src/lib/collab/draft.test.ts src/lib/research/citations.test.ts src/lib/research/competitors.test.ts src/lib/research/locale.test.ts src/lib/research/proposals.test.ts",
     "test:deploy": "node --experimental-strip-types --test src/lib/deploy/*.test.ts",
+    "cloud:deploy": "node --experimental-strip-types scripts/cloud-deploy.ts",
     "deploy:worker": "node --experimental-strip-types --env-file-if-exists=.env.local --env-file-if-exists=.env.deploy scripts/deploy-worker.ts",
     "db:push": "drizzle-kit push"
   },
@@ -31,7 +32,6 @@
     "@radix-ui/react-tabs": "^1.2.1",
     "@radix-ui/react-tooltip": "^1.4.1",
     "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^12.11.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "context.dev": "^3.29.0",
@@ -39,6 +39,7 @@
     "lucide-react": "^1.72.0",
     "next": "16.4.6",
     "openai": "^6.49.0",
+    "pg": "^8.23.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "server-only": "^0.0.1",
@@ -48,9 +49,10 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.16",
     "@tailwindcss/turbopack": "4.3.3",
-    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^20",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "drizzle-kit": "^0.31.11",

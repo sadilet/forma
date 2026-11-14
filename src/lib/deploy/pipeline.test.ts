@@ -4,18 +4,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
-import Database from "better-sqlite3";
 import type { CanvasSnapshot } from "../ai/schemas.ts";
 import { prepareRepo, repoDirFor } from "./build.ts";
 import { loadConfig } from "./config.ts";
-import { ensureDeployTables } from "./db.ts";
+import type { Db } from "./db.ts";
 import { runJob } from "./pipeline.ts";
 import type { PipelineDeps } from "./pipeline.ts";
 import { claimJob, enqueueJob, getJob, getPlan, listEvents } from "./queue.ts";
 import { answerOf, appFiles, fakeLlm, indexSource } from "./test-app.ts";
+import { closeMemoryDb, memoryDb } from "./test-db.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forma-deploy-test-"));
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+after(closeMemoryDb);
 
 const snapshot: CanvasSnapshot = {
   blocks: [
@@ -30,16 +31,15 @@ const snapshot: CanvasSnapshot = {
   sketches: [],
 };
 
-function setup(env: Record<string, string> = {}) {
-  const db = new Database(":memory:");
-  ensureDeployTables(db);
+async function setup(env: Record<string, string> = {}) {
+  const db = await memoryDb();
   const workDir = fs.mkdtempSync(path.join(tmp, "work-"));
   const config = loadConfig({ GCP_PROJECT_ID: "junction26hel-7607", DEPLOY_WORK_DIR: workDir, DEPLOY_BUILDER: "reference", ...env }, process.cwd());
   return { db, config, workDir };
 }
 
-function queueJob(db: Database.Database, projectId = "project-slotguard", template = "slotguard", canvas: CanvasSnapshot = snapshot) {
-  enqueueJob(db, {
+async function queueJob(db: Db, projectId = "project-slotguard", template = "slotguard", canvas: CanvasSnapshot = snapshot) {
+  await enqueueJob(db, {
     projectId,
     requestedBy: "user-alex",
     template,
@@ -47,7 +47,7 @@ function queueJob(db: Database.Database, projectId = "project-slotguard", templa
     snapshot: canvas,
     goal: "SlotGuard cuts no-show losses.",
   });
-  return claimJob(db, "w1")!;
+  return (await claimJob(db, "w1"))!;
 }
 
 const okDeps = (overrides: Partial<PipelineDeps> = {}): PipelineDeps => ({
@@ -58,11 +58,11 @@ const okDeps = (overrides: Partial<PipelineDeps> = {}): PipelineDeps => ({
   ...overrides,
 });
 
-const messages = (db: Database.Database, id: string) => listEvents(db, id).map((event) => event.message);
+const messages = async (db: Db, id: string) => (await listEvents(db, id)).map((event) => event.message);
 
 test("a dry run plans and builds but never calls Google Cloud", async () => {
-  const { db, config } = setup({ DEPLOY_DRY_RUN: "1" });
-  const job = queueJob(db);
+  const { db, config } = await setup({ DEPLOY_DRY_RUN: "1" });
+  const job = await queueJob(db);
   const deps = okDeps({
     ship: async () => {
       throw new Error("must not be called");
@@ -70,11 +70,11 @@ test("a dry run plans and builds but never calls Google Cloud", async () => {
   });
   const outcome = await runJob({ db, config, job, workerId: "w1", signal: new AbortController().signal, deps });
   assert.equal(outcome, "succeeded");
-  const done = getJob(db, job.id)!;
+  const done = (await getJob(db, job.id))!;
   assert.equal(done.status, "succeeded");
   assert.equal(done.stage, "done");
   assert.equal(done.url, null);
-  assert.ok(messages(db, job.id).some((message) => /Dry run/.test(message)));
+  assert.ok((await messages(db, job.id)).some((message) => /Dry run/.test(message)));
   const repo = repoDirFor(config, "project-slotguard");
   assert.ok(fs.existsSync(path.join(repo, "Dockerfile")));
   assert.ok(fs.existsSync(path.join(repo, "server.mjs")));
@@ -82,12 +82,12 @@ test("a dry run plans and builds but never calls Google Cloud", async () => {
 });
 
 test("the plan is saved and its open questions become warnings in the log", async () => {
-  const { db, config } = setup({ DEPLOY_DRY_RUN: "1" });
-  const job = queueJob(db);
+  const { db, config } = await setup({ DEPLOY_DRY_RUN: "1" });
+  const job = await queueJob(db);
   await runJob({ db, config, job, workerId: "w1", signal: new AbortController().signal, deps: okDeps() });
-  const plan = getPlan(db, job.id)!;
+  const plan = (await getPlan(db, job.id))!;
   assert.deepEqual(plan.tasks.map((task) => task.id), ["scaffold", "data", "screen:shape:checkout", "integrate"]);
-  const events = listEvents(db, job.id);
+  const events = await listEvents(db, job.id);
   assert.ok(events.some((event) => event.level === "warn" && /Deposit rules/.test(event.message)));
   assert.ok(events.some((event) => /Plan: 4 tasks/.test(event.message)));
   const written = JSON.parse(fs.readFileSync(path.join(repoDirFor(config, "project-slotguard"), ".forma", "PLAN.json"), "utf8"));
@@ -97,8 +97,8 @@ test("the plan is saved and its open questions become warnings in the log", asyn
 });
 
 test("a full deploy ships the repo, checks health, and records the address", async () => {
-  const { db, config } = setup();
-  const job = queueJob(db);
+  const { db, config } = await setup();
+  const job = await queueJob(db);
   const calls: { serviceName: string; sourceDir: string; releaseId: string }[] = [];
   const deps = okDeps({
     ship: async (_config, input, options) => {
@@ -109,7 +109,7 @@ test("a full deploy ships the repo, checks health, and records the address", asy
   });
   const outcome = await runJob({ db, config, job, workerId: "w1", signal: new AbortController().signal, deps });
   assert.equal(outcome, "succeeded");
-  const done = getJob(db, job.id)!;
+  const done = (await getJob(db, job.id))!;
   assert.equal(done.status, "succeeded");
   assert.equal(done.url, "https://svc.run.app");
   assert.equal(done.revision, "svc-00001");
@@ -117,14 +117,14 @@ test("a full deploy ships the repo, checks health, and records the address", asy
   assert.equal(calls[0].sourceDir, repoDirFor(config, "project-slotguard"));
   assert.equal(calls[0].serviceName, "forma-project-slotguard");
   assert.equal(calls[0].releaseId, job.id);
-  const log = messages(db, job.id);
+  const log = await messages(db, job.id);
   assert.equal(log.filter((message) => message === "Building using Dockerfile").length, 1, "repeated lines are shown once");
   assert.ok(log.includes("Deploying container"));
 });
 
 test("a failed deploy command fails the job with the reason and no address", async () => {
-  const { db, config } = setup();
-  const job = queueJob(db);
+  const { db, config } = await setup();
+  const job = await queueJob(db);
   const deps = okDeps({
     ship: async () => {
       throw new Error("gcloud run deploy failed (exit 1).\nBuild failed; check build logs for details");
@@ -132,17 +132,17 @@ test("a failed deploy command fails the job with the reason and no address", asy
   });
   const outcome = await runJob({ db, config, job, workerId: "w1", signal: new AbortController().signal, deps });
   assert.equal(outcome, "failed");
-  const failed = getJob(db, job.id)!;
+  const failed = (await getJob(db, job.id))!;
   assert.equal(failed.status, "failed");
   assert.equal(failed.stage, "ship");
   assert.match(failed.error ?? "", /Build failed/);
   assert.equal(failed.url, null);
-  assert.ok(listEvents(db, job.id).some((event) => event.level === "error"));
+  assert.ok((await listEvents(db, job.id)).some((event) => event.level === "error"));
 });
 
 test("an app that never answers fails the job but keeps the address", async () => {
-  const { db, config } = setup();
-  const job = queueJob(db);
+  const { db, config } = await setup();
+  const job = await queueJob(db);
   let tries = 0;
   const deps = okDeps({
     health: async () => {
@@ -153,15 +153,15 @@ test("an app that never answers fails the job but keeps the address", async () =
   const outcome = await runJob({ db, config, job, workerId: "w1", signal: new AbortController().signal, deps });
   assert.equal(outcome, "failed");
   assert.equal(tries, 8);
-  const failed = getJob(db, job.id)!;
+  const failed = (await getJob(db, job.id))!;
   assert.equal(failed.stage, "verify");
   assert.match(failed.error ?? "", /did not answer/);
   assert.match(failed.url ?? "", /^https:\/\//);
 });
 
 test("an app that answers on the third try succeeds", async () => {
-  const { db, config } = setup();
-  const job = queueJob(db);
+  const { db, config } = await setup();
+  const job = await queueJob(db);
   let tries = 0;
   const deps = okDeps({
     health: async () => {
@@ -175,8 +175,8 @@ test("an app that answers on the third try succeeds", async () => {
 });
 
 test("a shutdown during the build hands the job back without using up an attempt", async () => {
-  const { db, config } = setup();
-  const job = queueJob(db);
+  const { db, config } = await setup();
+  const job = await queueJob(db);
   const controller = new AbortController();
   const deps = okDeps({
     ship: (_config, _input, options) =>
@@ -187,14 +187,14 @@ test("a shutdown during the build hands the job back without using up an attempt
   });
   const outcome = await runJob({ db, config, job, workerId: "w1", signal: controller.signal, deps });
   assert.equal(outcome, "released");
-  const back = getJob(db, job.id)!;
+  const back = (await getJob(db, job.id))!;
   assert.equal(back.status, "queued");
   assert.equal(back.attempts, 0);
 });
 
 test("a job that was taken away is left alone", async () => {
-  const { db, config } = setup();
-  const job = queueJob(db);
+  const { db, config } = await setup();
+  const job = await queueJob(db);
   const controller = new AbortController();
   const deps = okDeps({
     ship: (_config, _input, options) =>
@@ -205,12 +205,12 @@ test("a job that was taken away is left alone", async () => {
   });
   const outcome = await runJob({ db, config, job, workerId: "w1", signal: controller.signal, deps });
   assert.equal(outcome, "lost");
-  assert.equal(getJob(db, job.id)!.status, "running", "the new owner decides what happens to it");
+  assert.equal((await getJob(db, job.id))!.status, "running", "the new owner decides what happens to it");
 });
 
 test("a job stops before the next stage once it is aborted", async () => {
-  const { db, config } = setup();
-  const job = queueJob(db);
+  const { db, config } = await setup();
+  const job = await queueJob(db);
   const controller = new AbortController();
   controller.abort("shutdown");
   const outcome = await runJob({ db, config, job, workerId: "w1", signal: controller.signal, deps: okDeps() });
@@ -227,7 +227,7 @@ function gitCanInit() {
 test("each deploy of a project is a new commit in the same repo, and old files do not linger", {
   skip: gitCanInit() ? false : "git cannot create a repository in this environment",
 }, async () => {
-  const { config } = setup();
+  const { config } = await setup();
   const log: string[] = [];
   const base = {
     config,
@@ -251,7 +251,7 @@ test("each deploy of a project is a new commit in the same repo, and old files d
 });
 
 test("without git the folder is still prepared, and the missing history is reported", async () => {
-  const { config } = setup();
+  const { config } = await setup();
   const log: string[] = [];
   const result = await prepareRepo({
     config,
@@ -269,7 +269,7 @@ test("without git the folder is still prepared, and the missing history is repor
 });
 
 test("a missing template is a clear error", async () => {
-  const { config } = setup();
+  const { config } = await setup();
   await assert.rejects(
     prepareRepo({
       config: { ...config, templatesDir: path.join(tmp, "nowhere") },
@@ -284,8 +284,8 @@ test("a missing template is a clear error", async () => {
   );
 });
 
-test("a project id can never point outside the work directory", () => {
-  const { config, workDir } = setup();
+test("a project id can never point outside the work directory", async () => {
+  const { config, workDir } = await setup();
   for (const id of ["../../etc", "..", "/absolute/path", "a/../../b", ""]) {
     const dir = repoDirFor(config, id);
     assert.ok(dir.startsWith(path.resolve(workDir) + path.sep), `${id} -> ${dir}`);
@@ -294,13 +294,13 @@ test("a project id can never point outside the work directory", () => {
 
 // ---- The app builder inside the pipeline ------------------------------------------------------------------------
 
-const run = (db: Database.Database, config: ReturnType<typeof setup>["config"], job: ReturnType<typeof queueJob>, deps: PipelineDeps) =>
+const run = (db: Db, config: Awaited<ReturnType<typeof setup>>["config"], job: Awaited<ReturnType<typeof queueJob>>, deps: PipelineDeps) =>
   runJob({ db, config, job, workerId: "w1", signal: new AbortController().signal, deps });
 
 test("the app builder writes the app, the repo records how, and no scratch files are left", async () => {
-  const { db, config } = setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "agent" });
+  const { db, config } = await setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "agent" });
   const llm = fakeLlm([answerOf(appFiles("Studio"), "Booking pages.")]);
-  const job = queueJob(db, "project-taskflow", "taskflow");
+  const job = await queueJob(db, "project-taskflow", "taskflow");
   const outcome = await run(db, config, job, okDeps({ llm: () => llm }));
   assert.equal(outcome, "succeeded");
   const repo = repoDirFor(config, "project-taskflow");
@@ -314,27 +314,27 @@ test("the app builder writes the app, the repo records how, and no scratch files
   assert.equal(release.summary, "Booking pages.");
   assert.equal(release.goal, "SlotGuard cuts no-show losses.");
   assert.equal(fs.existsSync(path.join(repo, "..", "scratch")), false);
-  const log = messages(db, job.id);
+  const log = await messages(db, job.id);
   assert.ok(log.some((line) => /The check passed/.test(line)));
   assert.ok(log.some((line) => line === "Builder: Booking pages."));
 });
 
 test("deploying again follows the canvas: unchanged is reused, changed is an update", async () => {
-  const { db, config } = setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "agent" });
+  const { db, config } = await setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "agent" });
   const llm = fakeLlm([answerOf(appFiles("Studio"))]);
   const deps = okDeps({ llm: () => llm });
 
-  assert.equal(await run(db, config, queueJob(db, "project-slotguard"), deps), "succeeded");
+  assert.equal(await run(db, config, (await queueJob(db, "project-slotguard")), deps), "succeeded");
   assert.equal(llm.calls.length, 1);
 
-  const second = queueJob(db, "project-slotguard");
+  const second = await queueJob(db, "project-slotguard");
   assert.equal(await run(db, config, second, deps), "succeeded");
   assert.equal(llm.calls.length, 1, "the same canvas does not ask the model again");
-  assert.ok(messages(db, second.id).some((line) => /has not changed/.test(line)));
+  assert.ok((await messages(db, second.id)).some((line) => /has not changed/.test(line)));
 
   const edited: CanvasSnapshot = structuredClone(snapshot);
   edited.blocks[0].description = "Decided: 30% deposit, cutoff 48 hours.";
-  const third = queueJob(db, "project-slotguard", "slotguard", edited);
+  const third = await queueJob(db, "project-slotguard", "slotguard", edited);
   llm.complete = async (request) => {
     llm.calls.push({ system: request.system, messages: structuredClone(request.messages) });
     return { text: answerOf({ "app/index.mjs": indexSource("Studio 30") }, "Raised to 30%."), truncated: false };
@@ -352,15 +352,15 @@ test("deploying again follows the canvas: unchanged is reused, changed is an upd
 });
 
 test("a build that fails keeps the last good release on disk", async () => {
-  const { db, config } = setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "agent" });
-  assert.equal(await run(db, config, queueJob(db), okDeps({ llm: () => fakeLlm([answerOf(appFiles("Good"))]) })), "succeeded");
+  const { db, config } = await setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "agent" });
+  assert.equal(await run(db, config, (await queueJob(db)), okDeps({ llm: () => fakeLlm([answerOf(appFiles("Good"))]) })), "succeeded");
 
   const edited: CanvasSnapshot = structuredClone(snapshot);
   edited.blocks[1].title = "Renamed screen";
   const broken = fakeLlm([answerOf({ "app/index.mjs": "export default function setup() { throw new Error('nope'); }\n" })]);
-  const failed = queueJob(db, "project-slotguard", "slotguard", edited);
+  const failed = await queueJob(db, "project-slotguard", "slotguard", edited);
   assert.equal(await run(db, config, failed, okDeps({ llm: () => broken })), "failed");
-  const job = getJob(db, failed.id)!;
+  const job = (await getJob(db, failed.id))!;
   assert.equal(job.stage, "build");
   assert.match(job.error ?? "", /could not produce a working app after 3 tries/);
 
@@ -370,52 +370,52 @@ test("a build that fails keeps the last good release on disk", async () => {
 });
 
 test("with no AI key the builder says what to add", async () => {
-  const { db, config } = setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "agent" });
-  const job = queueJob(db);
+  const { db, config } = await setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "agent" });
+  const job = await queueJob(db);
   assert.equal(await run(db, config, job, okDeps({ llm: () => null })), "failed");
-  const failed = getJob(db, job.id)!;
+  const failed = (await getJob(db, job.id))!;
   assert.equal(failed.stage, "build");
   assert.match(failed.error ?? "", /needs an AI key.*GEMINI_API_KEY/);
 });
 
 test("auto without a key ships the ready-made SlotGuard and warns that edits are not applied", async () => {
-  const { db, config } = setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "auto" });
-  const job = queueJob(db);
+  const { db, config } = await setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "auto" });
+  const job = await queueJob(db);
   assert.equal(await run(db, config, job, okDeps({ llm: () => null })), "succeeded");
-  const warn = listEvents(db, job.id).find((event) => event.level === "warn" && /NOT applied/.test(event.message));
+  const warn = (await listEvents(db, job.id)).find((event) => event.level === "warn" && /NOT applied/.test(event.message));
   assert.ok(warn, "the warning is in the log");
   const release = JSON.parse(fs.readFileSync(path.join(repoDirFor(config, "project-slotguard"), ".forma", "RELEASE.json"), "utf8"));
   assert.equal(release.builder, "reference");
 });
 
 test("auto without a key cannot deploy a workspace that has no ready-made app", async () => {
-  const { db, config } = setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "auto" });
-  const job = queueJob(db, "project-blank", "blank");
+  const { db, config } = await setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "auto" });
+  const job = await queueJob(db, "project-blank", "blank");
   assert.equal(await run(db, config, job, okDeps({ llm: () => null })), "failed");
-  assert.match(getJob(db, job.id)!.error ?? "", /needs an AI key/);
+  assert.match((await getJob(db, job.id))!.error ?? "", /needs an AI key/);
 });
 
 test("the reference builder refuses a workspace without a ready-made app", async () => {
-  const { db, config } = setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "reference" });
-  const job = queueJob(db, "project-blank", "blank");
+  const { db, config } = await setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "reference" });
+  const job = await queueJob(db, "project-blank", "blank");
   assert.equal(await run(db, config, job, okDeps({ llm: () => fakeLlm([answerOf(appFiles())]) })), "failed");
-  assert.match(getJob(db, job.id)!.error ?? "", /no ready-made app/);
+  assert.match((await getJob(db, job.id))!.error ?? "", /no ready-made app/);
 });
 
 test("a key is used even when the reference app exists, so canvas edits are applied", async () => {
-  const { db, config } = setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "auto" });
+  const { db, config } = await setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "auto" });
   const llm = fakeLlm([answerOf(appFiles())]);
-  const job = queueJob(db);
+  const job = await queueJob(db);
   assert.equal(await run(db, config, job, okDeps({ llm: () => llm })), "succeeded");
   assert.equal(llm.calls.length, 1);
 });
 
 test("a reference release is not mistaken for an app the builder can edit", async () => {
-  const { db, config } = setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "reference" });
-  assert.equal(await run(db, config, queueJob(db), okDeps()), "succeeded");
+  const { db, config } = await setup({ DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "reference" });
+  assert.equal(await run(db, config, (await queueJob(db)), okDeps()), "succeeded");
   const agent = loadConfig({ GCP_PROJECT_ID: "junction26hel-7607", DEPLOY_WORK_DIR: config.workDir, DEPLOY_DRY_RUN: "1", DEPLOY_BUILDER: "agent" }, process.cwd());
   const llm = fakeLlm([answerOf(appFiles())]);
-  const job = queueJob(db);
+  const job = await queueJob(db);
   assert.equal(await run(db, agent, job, okDeps({ llm: () => llm })), "succeeded");
   assert.equal(JSON.parse(fs.readFileSync(path.join(repoDirFor(agent, "project-slotguard"), ".forma", "RELEASE.json"), "utf8")).mode, "fresh");
 });

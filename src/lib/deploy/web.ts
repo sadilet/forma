@@ -1,21 +1,24 @@
 import "server-only";
 
-import type Database from "better-sqlite3";
-import { db, readyDb } from "@/lib/db";
-import { ensureDeployTables } from "./db.ts";
+import { pool, readyDb } from "@/lib/db";
+import { ensureDeployTables, poolDb } from "./db.ts";
+import type { Db } from "./db.ts";
 
-// The deploy tables for code that runs inside Next.js. It reuses the connection the rest of the app already
-// has instead of opening a second one to the same file. The worker is a separate process and opens its own
-// (getDeployDb in db.ts). This file is the only place in the module that imports from the app.
+// The deploy tables for code that runs inside Next.js. It reuses the pool the rest of the app already has.
+// The worker is a separate process and opens its own (getDeployDb in db.ts). This file is the only place in
+// the module that imports from the app.
 
-const prepared = new WeakSet<Database.Database>();
+let prepared: Promise<Db> | null = null;
 
-export function getWebDeployDb(): Database.Database {
-  readyDb();
-  const sqlite = db.$client;
-  if (!prepared.has(sqlite)) {
-    ensureDeployTables(sqlite);
-    prepared.add(sqlite);
-  }
-  return sqlite;
+export function getWebDeployDb(): Promise<Db> {
+  prepared ??= (async () => {
+    await readyDb();
+    const db = poolDb(pool);
+    await ensureDeployTables(db);
+    return db;
+  })().catch((error) => {
+    prepared = null;
+    throw error;
+  });
+  return prepared;
 }

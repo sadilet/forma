@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db, readyDb } from "@/lib/db";
 import { conversations, projects, specifications } from "@/lib/db/schema";
 import { mergeMessages } from "@/lib/collab/messages";
@@ -33,18 +33,19 @@ function toProject(row: typeof projects.$inferSelect): ProjectRecord {
   };
 }
 
-export function listProjects() {
-  readyDb();
-  return db.select().from(projects).orderBy(desc(projects.createdAt)).all().map(toProject);
+export async function listProjects() {
+  await readyDb();
+  const rows = await db.select().from(projects).orderBy(desc(projects.createdAt));
+  return rows.map(toProject);
 }
 
-export function getProject(id: string) {
-  readyDb();
-  const row = db.select().from(projects).where(eq(projects.id, id)).get();
+export async function getProject(id: string) {
+  await readyDb();
+  const [row] = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
   return row ? toProject(row) : null;
 }
 
-export function createProjectRecord(input: {
+export async function createProjectRecord(input: {
   id: string;
   name: string;
   ownerId: string;
@@ -52,34 +53,37 @@ export function createProjectRecord(input: {
   template: ProjectTemplate;
   goal: string;
 }) {
-  readyDb();
-  db.insert(projects)
-    .values({ ...input, createdAt: Date.now() })
-    .run();
-  return getProject(input.id)!;
+  await readyDb();
+  await db.insert(projects).values({ ...input, createdAt: Date.now() });
+  return (await getProject(input.id))!;
 }
 
-export function updateProjectRecord(id: string, patch: { name?: string; goal?: string }) {
-  readyDb();
-  const current = getProject(id);
+export async function updateProjectRecord(id: string, patch: { name?: string; goal?: string }) {
+  await readyDb();
+  const current = await getProject(id);
   if (!current) return null;
-  db.update(projects)
+  await db
+    .update(projects)
     .set({
       name: patch.name ?? current.name,
       goal: patch.goal ?? current.goal,
     })
-    .where(eq(projects.id, id))
-    .run();
+    .where(eq(projects.id, id));
   return getProject(id);
 }
 
-export function getSpecificationRecord(projectId: string, blockId: string) {
-  readyDb();
-  const row = db
+async function findSpecification(projectId: string, blockId: string) {
+  const [row] = await db
     .select()
     .from(specifications)
     .where(and(eq(specifications.projectId, projectId), eq(specifications.blockId, blockId)))
-    .get();
+    .limit(1);
+  return row;
+}
+
+export async function getSpecificationRecord(projectId: string, blockId: string) {
+  await readyDb();
+  const row = await findSpecification(projectId, blockId);
   if (!row) return { specification: null, updatedAt: null };
   const parsed = specificationSchema.safeParse(JSON.parse(row.content));
   return {
@@ -88,115 +92,110 @@ export function getSpecificationRecord(projectId: string, blockId: string) {
   };
 }
 
-export function getSpecification(projectId: string, blockId: string): Specification | null {
-  return getSpecificationRecord(projectId, blockId).specification;
+export async function getSpecification(projectId: string, blockId: string): Promise<Specification | null> {
+  return (await getSpecificationRecord(projectId, blockId)).specification;
 }
 
-export function writeSpecification(
+// Two people saving the same block at once: the unique (project, block) index decides which write lands
+// first, and the update below only applies if the row still has the version the caller saw.
+export async function writeSpecification(
   projectId: string,
   blockId: string,
   content: Specification,
   expectedUpdatedAt: number | null,
 ) {
-  readyDb();
-  const existing = db
-    .select()
-    .from(specifications)
-    .where(and(eq(specifications.projectId, projectId), eq(specifications.blockId, blockId)))
-    .get();
-  if ((existing?.updatedAt ?? null) !== expectedUpdatedAt) {
-    const current = getSpecificationRecord(projectId, blockId);
-    return { conflict: true as const, ...current };
-  }
+  await readyDb();
   const now = Date.now();
-  if (existing) {
-    db.update(specifications)
-      .set({ content: JSON.stringify(content), updatedAt: now })
-      .where(eq(specifications.id, existing.id))
-      .run();
+  const payload = JSON.stringify(content);
+
+  if (expectedUpdatedAt === null) {
+    const inserted = await db
+      .insert(specifications)
+      .values({ id: crypto.randomUUID(), projectId, blockId, content: payload, updatedAt: now })
+      .onConflictDoNothing()
+      .returning({ id: specifications.id });
+    if (inserted.length === 1) return { conflict: false as const, updatedAt: now };
   } else {
-    db.insert(specifications)
-      .values({
-        id: crypto.randomUUID(),
-        projectId,
-        blockId,
-        content: JSON.stringify(content),
-        updatedAt: now,
-      })
-      .run();
+    const updated = await db
+      .update(specifications)
+      .set({ content: payload, updatedAt: now })
+      .where(
+        and(
+          eq(specifications.projectId, projectId),
+          eq(specifications.blockId, blockId),
+          eq(specifications.updatedAt, expectedUpdatedAt),
+        ),
+      )
+      .returning({ id: specifications.id });
+    if (updated.length === 1) return { conflict: false as const, updatedAt: now };
   }
-  return { conflict: false as const, updatedAt: now };
+
+  const current = await getSpecificationRecord(projectId, blockId);
+  return { conflict: true as const, ...current };
 }
 
-export function saveSpecification(projectId: string, blockId: string, content: Specification) {
-  readyDb();
+export async function saveSpecification(projectId: string, blockId: string, content: Specification) {
+  await readyDb();
   const now = Date.now();
-  const existing = db
-    .select({ id: specifications.id })
-    .from(specifications)
-    .where(and(eq(specifications.projectId, projectId), eq(specifications.blockId, blockId)))
-    .get();
-  if (existing) {
-    db.update(specifications)
-      .set({ content: JSON.stringify(content), updatedAt: now })
-      .where(eq(specifications.id, existing.id))
-      .run();
-    return;
-  }
-  db.insert(specifications)
-    .values({
-      id: crypto.randomUUID(),
-      projectId,
-      blockId,
-      content: JSON.stringify(content),
-      updatedAt: now,
-    })
-    .run();
+  const payload = JSON.stringify(content);
+  await db
+    .insert(specifications)
+    .values({ id: crypto.randomUUID(), projectId, blockId, content: payload, updatedAt: now })
+    .onConflictDoUpdate({
+      target: [specifications.projectId, specifications.blockId],
+      set: { content: payload, updatedAt: now },
+    });
 }
 
 const messagesSchema = z.array(chatMessageSchema);
 
-export function getConversation(projectId: string, blockId: string): ChatMessage[] {
-  readyDb();
-  const row = db
+export async function getConversation(projectId: string, blockId: string): Promise<ChatMessage[]> {
+  await readyDb();
+  const [row] = await db
     .select()
     .from(conversations)
     .where(and(eq(conversations.projectId, projectId), eq(conversations.blockId, blockId)))
-    .get();
+    .limit(1);
   if (!row) return [];
   const parsed = messagesSchema.safeParse(JSON.parse(row.messages));
   return parsed.success ? parsed.data : [];
 }
 
-export function mergeConversation(projectId: string, blockId: string, incoming: ChatMessage[]) {
-  const merged = mergeMessages(getConversation(projectId, blockId), incoming);
-  saveConversation(projectId, blockId, merged);
-  return merged;
+// Two people sending a message at the same moment must not lose either one, so the read, merge and write
+// happen in one transaction, and a lock on the row keeps a second writer waiting for the first.
+export async function mergeConversation(projectId: string, blockId: string, incoming: ChatMessage[]) {
+  await readyDb();
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`conversation:${projectId}:${blockId}`}))`);
+    const [row] = await tx
+      .select()
+      .from(conversations)
+      .where(and(eq(conversations.projectId, projectId), eq(conversations.blockId, blockId)))
+      .limit(1);
+    const parsed = row ? messagesSchema.safeParse(JSON.parse(row.messages)) : null;
+    const merged = mergeMessages(parsed?.success ? parsed.data : [], incoming);
+    const payload = JSON.stringify(merged);
+    const now = Date.now();
+    await tx
+      .insert(conversations)
+      .values({ id: crypto.randomUUID(), projectId, blockId, messages: payload, updatedAt: now })
+      .onConflictDoUpdate({
+        target: [conversations.projectId, conversations.blockId],
+        set: { messages: payload, updatedAt: now },
+      });
+    return merged;
+  });
 }
 
-export function saveConversation(projectId: string, blockId: string, messages: ChatMessage[]) {
-  readyDb();
+export async function saveConversation(projectId: string, blockId: string, messages: ChatMessage[]) {
+  await readyDb();
   const now = Date.now();
   const payload = JSON.stringify(messages);
-  const existing = db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(and(eq(conversations.projectId, projectId), eq(conversations.blockId, blockId)))
-    .get();
-  if (existing) {
-    db.update(conversations)
-      .set({ messages: payload, updatedAt: now })
-      .where(eq(conversations.id, existing.id))
-      .run();
-    return;
-  }
-  db.insert(conversations)
-    .values({
-      id: crypto.randomUUID(),
-      projectId,
-      blockId,
-      messages: payload,
-      updatedAt: now,
-    })
-    .run();
+  await db
+    .insert(conversations)
+    .values({ id: crypto.randomUUID(), projectId, blockId, messages: payload, updatedAt: now })
+    .onConflictDoUpdate({
+      target: [conversations.projectId, conversations.blockId],
+      set: { messages: payload, updatedAt: now },
+    });
 }

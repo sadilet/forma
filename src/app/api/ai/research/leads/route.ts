@@ -20,9 +20,9 @@ export async function GET(request: Request) {
   if (!user) return Response.json({ error: "Sign in to read leads." }, { status: 401 });
   const url = new URL(request.url);
   const projectId = url.searchParams.get("projectId") ?? "";
-  const project = getProject(projectId);
+  const project = await getProject(projectId);
   if (!project) return Response.json({ error: "This workspace no longer exists." }, { status: 404 });
-  const leads = listLeads(projectId);
+  const leads = await listLeads(projectId);
   if (url.searchParams.get("format") === "csv") {
     return new Response(leadsToCsv(leads), {
       headers: {
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
       },
     });
   }
-  return Response.json({ leads, session: latestResearchArtifact(projectId, "leads") });
+  return Response.json({ leads, session: await latestResearchArtifact(projectId, "leads") });
 }
 
 const runSchema = z.object({
@@ -55,7 +55,7 @@ export async function POST(request: Request) {
   }
   const parsed = runSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: "The lead request was not valid." }, { status: 400 });
-  const project = getProject(parsed.data.projectId);
+  const project = await getProject(parsed.data.projectId);
   if (!project) return Response.json({ error: "This workspace no longer exists." }, { status: 404 });
   const locale = localeFromFields(parsed.data.brief.city, parsed.data.brief.country);
   if (!locale.city || !locale.country) {
@@ -73,8 +73,8 @@ export async function POST(request: Request) {
       brief: { ...parsed.data.brief, city: locale.city, country: locale.country },
       locale,
     });
-    replaceLeads(project.id, result.leads);
-    const session = saveResearchArtifact({
+    await replaceLeads(project.id, result.leads);
+    const session = await saveResearchArtifact({
       projectId: project.id,
       kind: "leads",
       title: "Lead research",
@@ -112,9 +112,9 @@ export async function PATCH(request: Request) {
   if (!user) return Response.json({ error: "Sign in to update a lead." }, { status: 401 });
   const parsed = patchSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: "That lead update was not valid." }, { status: 400 });
-  const project = getProject(parsed.data.projectId);
+  const project = await getProject(parsed.data.projectId);
   if (!project) return Response.json({ error: "This workspace no longer exists." }, { status: 404 });
-  const lead = updateLeadStatus(project.id, parsed.data.leadId, parsed.data.status);
+  const lead = await updateLeadStatus(project.id, parsed.data.leadId, parsed.data.status);
   if (!lead) return Response.json({ error: "That lead is no longer on the list." }, { status: 404 });
   await publishResourceUpdate({
     roomId: project.roomId,
@@ -139,7 +139,7 @@ export async function PUT(request: Request) {
   if ("error" in loaded) return Response.json({ error: loaded.error }, { status: 503 });
   const parsed = briefSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: "The canvas snapshot was not valid." }, { status: 400 });
-  const project = getProject(parsed.data.projectId);
+  const project = await getProject(parsed.data.projectId);
   if (!project) return Response.json({ error: "This workspace no longer exists." }, { status: 404 });
   const text = [
     parsed.data.projectGoal,

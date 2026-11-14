@@ -18,10 +18,10 @@ export async function GET(request: Request) {
     blockId: url.searchParams.get("blockId") ?? "",
   });
   if (!parsed.success) return Response.json({ error: "Missing conversation." }, { status: 400 });
-  if (!getProject(parsed.data.projectId)) {
+  if (!await getProject(parsed.data.projectId)) {
     return Response.json({ error: "This workspace no longer exists." }, { status: 404 });
   }
-  return Response.json({ messages: getConversation(parsed.data.projectId, parsed.data.blockId) });
+  return Response.json({ messages: await getConversation(parsed.data.projectId, parsed.data.blockId) });
 }
 
 const putSchema = z.object({
@@ -35,11 +35,11 @@ export async function PUT(request: Request) {
   if (!user) return Response.json({ error: "Sign in to save this conversation." }, { status: 401 });
   const parsed = putSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: "That conversation is not valid." }, { status: 400 });
-  const project = getProject(parsed.data.projectId);
+  const project = await getProject(parsed.data.projectId);
   if (!project) {
     return Response.json({ error: "This workspace no longer exists." }, { status: 404 });
   }
-  const messages = mergeConversation(parsed.data.projectId, parsed.data.blockId, parsed.data.messages);
+  const messages = await mergeConversation(parsed.data.projectId, parsed.data.blockId, parsed.data.messages);
   await publishResourceUpdate({
     roomId: project.roomId,
     resource: "conversation",

@@ -1,16 +1,16 @@
 import { randomUUID } from "node:crypto";
-import type Database from "better-sqlite3";
 import type { DeployConfig } from "./config.ts";
 import { HEARTBEAT_MS } from "./contract.ts";
 import { realDeps, runJob } from "./pipeline.ts";
 import type { PipelineDeps } from "./pipeline.ts";
+import type { Db } from "./db.ts";
 import { claimJob, heartbeat, requeueStale } from "./queue.ts";
 
 // Takes jobs from the queue and runs them, up to `concurrency` at a time, until the signal aborts.
 // Run it as its own process (npm run deploy:worker). The web app only puts jobs in the queue.
 
 export async function runWorker(options: {
-  db: Database.Database;
+  db: Db;
   config: DeployConfig;
   signal: AbortSignal;
   workerId?: string;
@@ -25,12 +25,18 @@ export async function runWorker(options: {
   const active = new Map<string, Promise<unknown>>();
   const controllers = new Map<string, AbortController>();
 
-  const start = (job: NonNullable<ReturnType<typeof claimJob>>) => {
+  const start = (job: NonNullable<Awaited<ReturnType<typeof claimJob>>>) => {
     const controller = new AbortController();
     controllers.set(job.id, controller);
     // If the heartbeat fails, the queue gave this job to someone else. Stop working on it.
     const beat = setInterval(() => {
-      if (!heartbeat(db, job.id, workerId)) controller.abort("lost");
+      heartbeat(db, job.id, workerId).then(
+        (owned) => {
+          if (!owned) controller.abort("lost");
+        },
+        // A database that cannot be reached for a moment is not proof that the job was lost.
+        (error) => console.error(`[${workerId}] heartbeat failed:`, error),
+      );
     }, HEARTBEAT_MS);
     if (options.echo) console.log(`[${workerId}] picked up ${job.serviceName} (${job.id})`);
     const running = runJob({ db, config, job, workerId, signal: controller.signal, deps, echo: options.echo })
@@ -48,14 +54,14 @@ export async function runWorker(options: {
 
   while (!signal.aborted) {
     try {
-      requeueStale(db);
+      await requeueStale(db);
       while (active.size < config.concurrency) {
-        const job = claimJob(db, workerId);
+        const job = await claimJob(db, workerId);
         if (!job) break;
         start(job);
       }
     } catch (error) {
-      // A locked database or similar. Try again on the next round instead of stopping the worker.
+      // The database cannot be reached, or similar. Try again on the next round instead of stopping the worker.
       console.error(`[${workerId}] queue error:`, error);
     }
     await deps.sleep(pollMs, signal);

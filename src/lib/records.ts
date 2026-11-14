@@ -37,12 +37,12 @@ export type StoredAnalysis = {
   createdAt: number;
 };
 
-export function saveAnalysis(input: {
+export async function saveAnalysis(input: {
   projectId: string;
   analysis: Analysis;
   createdBy: string;
-}): StoredAnalysis {
-  readyDb();
+}): Promise<StoredAnalysis> {
+  await readyDb();
   const row = {
     id: crypto.randomUUID(),
     projectId: input.projectId,
@@ -54,7 +54,7 @@ export function saveAnalysis(input: {
     createdBy: input.createdBy,
     createdAt: Date.now(),
   };
-  db.insert(analyses).values(row).run();
+  await db.insert(analyses).values(row);
   return {
     id: row.id,
     summary: row.summary,
@@ -65,14 +65,14 @@ export function saveAnalysis(input: {
   };
 }
 
-export function latestAnalysis(projectId: string): StoredAnalysis | null {
-  readyDb();
-  const row = db
+export async function latestAnalysis(projectId: string): Promise<StoredAnalysis | null> {
+  await readyDb();
+  const [row] = await db
     .select()
     .from(analyses)
     .where(eq(analyses.projectId, projectId))
     .orderBy(desc(analyses.createdAt))
-    .get();
+    .limit(1);
   if (!row) return null;
   const parsed = storedAnalysisSchema.safeParse(readJson(row.findingsJson));
   if (!parsed.success) return null;
@@ -98,7 +98,7 @@ export type StoredArtifact = {
   createdAt: number;
 };
 
-export function saveResearchArtifact(input: {
+export async function saveResearchArtifact(input: {
   projectId: string;
   kind: ResearchKind;
   title: string;
@@ -108,7 +108,7 @@ export function saveResearchArtifact(input: {
   citations: Citation[];
   createdBy: string;
 }) {
-  readyDb();
+  await readyDb();
   const row = {
     id: crypto.randomUUID(),
     projectId: input.projectId,
@@ -122,20 +122,20 @@ export function saveResearchArtifact(input: {
     createdBy: input.createdBy,
     createdAt: Date.now(),
   };
-  db.insert(researchArtifacts).values(row).run();
+  await db.insert(researchArtifacts).values(row);
   const stored = toArtifact(row);
   if (!stored) throw new Error("The research result could not be stored.");
   return stored;
 }
 
-export function latestResearchArtifact(projectId: string, kind: ResearchKind): StoredArtifact | null {
-  readyDb();
-  const row = db
+export async function latestResearchArtifact(projectId: string, kind: ResearchKind): Promise<StoredArtifact | null> {
+  await readyDb();
+  const [row] = await db
     .select()
     .from(researchArtifacts)
     .where(and(eq(researchArtifacts.projectId, projectId), eq(researchArtifacts.kind, kind)))
     .orderBy(desc(researchArtifacts.createdAt))
-    .get();
+    .limit(1);
   return row ? toArtifact(row) : null;
 }
 
@@ -156,12 +156,13 @@ export type LeadRecord = {
   createdAt: number;
 };
 
-export function replaceLeads(projectId: string, rows: LeadRecord[]) {
-  readyDb();
-  db.transaction((tx) => {
-    tx.delete(leads).where(eq(leads.projectId, projectId)).run();
+export async function replaceLeads(projectId: string, rows: LeadRecord[]) {
+  await readyDb();
+  await db.transaction(async (tx) => {
+    await tx.delete(leads).where(eq(leads.projectId, projectId));
     if (rows.length === 0) return;
-    tx.insert(leads)
+    await tx
+      .insert(leads)
       .values(
         rows.map((lead) => ({
           id: lead.id,
@@ -180,34 +181,32 @@ export function replaceLeads(projectId: string, rows: LeadRecord[]) {
           status: lead.status,
           createdAt: lead.createdAt,
         })),
-      )
-      .run();
+      );
   });
 }
 
-export function listLeads(projectId: string): LeadRecord[] {
-  readyDb();
-  return db
+export async function listLeads(projectId: string): Promise<LeadRecord[]> {
+  await readyDb();
+  const rows = await db
     .select()
     .from(leads)
     .where(eq(leads.projectId, projectId))
-    .orderBy(desc(leads.createdAt))
-    .all()
-    .flatMap((row) => {
-      const lead = toLead(row);
-      return lead ? [lead] : [];
-    });
+    .orderBy(desc(leads.createdAt));
+  return rows.flatMap((row) => {
+    const lead = toLead(row);
+    return lead ? [lead] : [];
+  });
 }
 
-export function updateLeadStatus(projectId: string, leadId: string, status: LeadStatus) {
-  readyDb();
-  const current = db
+export async function updateLeadStatus(projectId: string, leadId: string, status: LeadStatus) {
+  await readyDb();
+  const [current] = await db
     .select()
     .from(leads)
     .where(and(eq(leads.projectId, projectId), eq(leads.id, leadId)))
-    .get();
+    .limit(1);
   if (!current) return null;
-  db.update(leads).set({ status }).where(eq(leads.id, leadId)).run();
+  await db.update(leads).set({ status }).where(eq(leads.id, leadId));
   return toLead({ ...current, status });
 }
 

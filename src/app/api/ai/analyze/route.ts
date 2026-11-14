@@ -19,10 +19,10 @@ export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "Sign in to read the canvas review." }, { status: 401 });
   const projectId = new URL(request.url).searchParams.get("projectId") ?? "";
-  if (!projectId || !getProject(projectId)) {
+  if (!projectId || !await getProject(projectId)) {
     return Response.json({ error: "This workspace no longer exists." }, { status: 404 });
   }
-  return Response.json({ analysis: latestAnalysis(projectId) });
+  return Response.json({ analysis: await latestAnalysis(projectId) });
 }
 
 export async function POST(request: Request) {
@@ -35,7 +35,7 @@ export async function POST(request: Request) {
   const parsed = requestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: "The canvas snapshot was not valid." }, { status: 400 });
 
-  const project = getProject(parsed.data.projectId);
+  const project = await getProject(parsed.data.projectId);
   if (!project) return Response.json({ error: "This workspace no longer exists." }, { status: 404 });
 
   try {
@@ -64,7 +64,7 @@ ${describeCanvas(parsed.data.canvas)}`,
         scope: "conclusions",
       }),
     };
-    const stored = saveAnalysis({ projectId: project.id, analysis, createdBy: user.id });
+    const stored = await saveAnalysis({ projectId: project.id, analysis, createdBy: user.id });
     await publishResourceUpdate({
       roomId: project.roomId,
       resource: "analysis",

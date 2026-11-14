@@ -1,0 +1,19 @@
+# Builds one target of the Dockerfile and pushes it. Used by scripts/cloud-deploy.ts:
+#   gcloud builds submit --config scripts/cloud-build.yaml --substitutions _TARGET=web,_IMAGE=...,_TLDRAW=...
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --target
+      - ${_TARGET}
+      - --build-arg
+      - NEXT_PUBLIC_TLDRAW_LICENSE_KEY=${_TLDRAW}
+      - -t
+      - ${_IMAGE}
+      - .
+images:
+  - ${_IMAGE}
+options:
+  logging: CLOUD_LOGGING_ONLY
+substitutions:
+  _TLDRAW: ""

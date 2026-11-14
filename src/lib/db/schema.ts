@@ -1,15 +1,18 @@
-import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { bigint, doublePrecision, index, integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core";
 
-export const users = sqliteTable("users", {
+// Timestamps are milliseconds since 1970, which does not fit a 32-bit integer.
+const ms = (name: string) => bigint(name, { mode: "number" });
+
+export const users = pgTable("users", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   color: text("color").notNull(),
-  createdAt: integer("created_at").notNull(),
+  createdAt: ms("created_at").notNull(),
 });
 
-export const projects = sqliteTable("projects", {
+export const projects = pgTable("projects", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   ownerId: text("owner_id")
@@ -18,10 +21,10 @@ export const projects = sqliteTable("projects", {
   roomId: text("room_id").notNull().unique(),
   template: text("template").notNull(),
   goal: text("goal").notNull().default(""),
-  createdAt: integer("created_at").notNull(),
+  createdAt: ms("created_at").notNull(),
 });
 
-export const specifications = sqliteTable(
+export const specifications = pgTable(
   "specifications",
   {
     id: text("id").primaryKey(),
@@ -30,7 +33,7 @@ export const specifications = sqliteTable(
       .references(() => projects.id, { onDelete: "cascade" }),
     blockId: text("block_id").notNull(),
     content: text("content").notNull(),
-    updatedAt: integer("updated_at").notNull(),
+    updatedAt: ms("updated_at").notNull(),
   },
   (table) => ({
     projectBlock: uniqueIndex("specifications_project_block").on(
@@ -40,7 +43,7 @@ export const specifications = sqliteTable(
   }),
 );
 
-export const conversations = sqliteTable(
+export const conversations = pgTable(
   "conversations",
   {
     id: text("id").primaryKey(),
@@ -49,7 +52,7 @@ export const conversations = sqliteTable(
       .references(() => projects.id, { onDelete: "cascade" }),
     blockId: text("block_id").notNull().default(""),
     messages: text("messages").notNull(),
-    updatedAt: integer("updated_at").notNull(),
+    updatedAt: ms("updated_at").notNull(),
   },
   (table) => ({
     projectBlock: uniqueIndex("conversations_project_block").on(
@@ -59,7 +62,7 @@ export const conversations = sqliteTable(
   }),
 );
 
-export const analyses = sqliteTable(
+export const analyses = pgTable(
   "analyses",
   {
     id: text("id").primaryKey(),
@@ -71,14 +74,14 @@ export const analyses = sqliteTable(
     createdBy: text("created_by")
       .notNull()
       .references(() => users.id),
-    createdAt: integer("created_at").notNull(),
+    createdAt: ms("created_at").notNull(),
   },
   (table) => ({
     projectCreated: index("analyses_project_created").on(table.projectId, table.createdAt),
   }),
 );
 
-export const researchArtifacts = sqliteTable(
+export const researchArtifacts = pgTable(
   "research_artifacts",
   {
     id: text("id").primaryKey(),
@@ -95,7 +98,7 @@ export const researchArtifacts = sqliteTable(
     createdBy: text("created_by")
       .notNull()
       .references(() => users.id),
-    createdAt: integer("created_at").notNull(),
+    createdAt: ms("created_at").notNull(),
   },
   (table) => ({
     projectKindCreated: index("research_artifacts_project_kind_created").on(
@@ -106,7 +109,7 @@ export const researchArtifacts = sqliteTable(
   }),
 );
 
-export const leads = sqliteTable(
+export const leads = pgTable(
   "leads",
   {
     id: text("id").primaryKey(),
@@ -121,11 +124,11 @@ export const leads = sqliteTable(
     location: text("location").notNull(),
     profileUrlsJson: text("profile_urls_json").notNull(),
     skillsJson: text("skills_json").notNull(),
-    matchConfidence: real("match_confidence"),
+    matchConfidence: doublePrecision("match_confidence"),
     warmTrigger: text("warm_trigger").notNull(),
     outreachAngle: text("outreach_angle").notNull(),
     status: text("status").notNull(),
-    createdAt: integer("created_at").notNull(),
+    createdAt: ms("created_at").notNull(),
   },
   (table) => ({
     projectStatus: index("leads_project_status").on(table.projectId, table.status),

@@ -8,8 +8,8 @@ The deploy module takes a project's canvas, builds a build plan, has a model wri
 
 ```
 Deploy button in the workspace
-  → POST /api/deploy        (the canvas goes to the server, the job is queued in SQLite)
-  → a worker picks up the job   (separate process: npm run deploy:worker)
+  → POST /api/deploy        (the canvas goes to the server, the job is queued in Postgres)
+  → a worker picks up the job   (separate process: npm run deploy:worker, or the forma-worker service in the cloud, see cloud.md)
       1. plan    canvas JSON → ordered task list (src/lib/deploy/planner.ts)
       2. build   the app builder writes the app and checks it (see below), then the folder
                  data/deploy/<project>/repo gets one git commit per deploy
@@ -167,7 +167,7 @@ Tests: `npm run test:deploy`.
 | "The app builder … failed: 429 …" or "503" | the model is busy or out of quota. Busy answers are retried twice on their own; otherwise wait and deploy again, or set `DEPLOY_MODEL` |
 | "could not produce a working app after 3 tries" | the log lists what the check found. Deploy again (the model usually fixes it on a new run), or put the problem into the canvas text, or use `DEPLOY_BUILDER=reference` for SlotGuard |
 | The model's answer was cut off | raise `DEPLOY_MAX_OUTPUT_TOKENS` if your model allows it, or split the canvas into a smaller product |
-| `SqliteError: disk I/O error` | do not open `data/forma.db` with outside programs while the dev server is running: they can delete its `-wal`/`-shm` journal. Stop the server with Ctrl+C and start it again |
+| `ECONNREFUSED 127.0.0.1:5432` | the local database is not running: `docker compose up -d db` |
 
 ## What's next
 

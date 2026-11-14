@@ -244,23 +244,41 @@ async function seedSharedTemplate(
 ) {
   if (!room) return;
   const { needsSeed, seed } = TEMPLATE_SEEDS[template];
-  await new Promise((resolve) => window.setTimeout(resolve, 400));
-  if (!needsSeed(editor)) {
+  const fit = () => {
     // The camera is local to each client, so a demo canvas that is already seeded opens at 100%. Fit it instead.
     if (editor.getCurrentPageShapeIds().size > 0) editor.zoomToFit({ animation: { duration: 0 } });
+  };
+  const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+  await wait(400);
+  const { root } = await room.getStorage();
+  // A room that someone already filled must not be seeded again. The seed helpers delete every shape
+  // first, so two clients seeding at once makes the canvas flash empty and redraw.
+  if (root.get("seeded") === true || !needsSeed(editor)) {
+    fit();
     return;
   }
-  const { root } = await room.getStorage();
+
   const selfId = room.getSelf()?.connectionId ?? 0;
   const leader = Math.min(selfId, ...room.getOthers().map((other) => other.connectionId));
   if (selfId !== leader) {
-    window.setTimeout(() => {
-      if (needsSeed(editor)) seed(editor);
-    }, 1800);
+    // Wait for the leader's shapes to arrive. Never seed as a follower.
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await wait(250);
+      if (root.get("seeded") === true || !needsSeed(editor)) break;
+    }
+    fit();
     return;
   }
-  seed(editor);
+
+  // Claim the room before drawing, so a second tab that also thinks it is the leader does not wipe it.
+  if (root.get("seeded") === true) {
+    fit();
+    return;
+  }
   root.set("seeded", true);
+  seed(editor);
+  fit();
 }
 
 export function CanvasMessage({ title, detail }: { title: string; detail?: string }) {

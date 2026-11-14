@@ -33,10 +33,10 @@ export async function POST(request: Request) {
   const parsed = startSchema.safeParse(body);
   if (!parsed.success) return Response.json({ error: "Send the workspace and its canvas." }, { status: 400 });
 
-  const project = getProject(parsed.data.projectId);
+  const project = await getProject(parsed.data.projectId);
   if (!project) return Response.json({ error: "This workspace no longer exists." }, { status: 404 });
 
-  const { job, created } = enqueueJob(getWebDeployDb(), {
+  const { job, created } = await enqueueJob(await getWebDeployDb(), {
     projectId: project.id,
     requestedBy: user.id,
     template: project.template,
@@ -58,14 +58,14 @@ export async function GET(request: Request) {
     after: params.get("after") ?? 0,
   });
   if (!parsed.success) return Response.json({ error: "Missing workspace." }, { status: 400 });
-  if (!getProject(parsed.data.projectId)) return Response.json({ error: "This workspace no longer exists." }, { status: 404 });
+  if (!await getProject(parsed.data.projectId)) return Response.json({ error: "This workspace no longer exists." }, { status: 404 });
 
-  const db = getWebDeployDb();
-  const job = latestJobForProject(db, parsed.data.projectId);
+  const db = await getWebDeployDb();
+  const job = await latestJobForProject(db, parsed.data.projectId);
   if (!job) return Response.json({ job: null, events: [], reset: true, serverTime: Date.now() });
 
   // `after` only means something for the job the browser already knows. For a newer job, start from the top.
   const known = parsed.data.jobId === job.id;
-  const events = listEvents(db, job.id, known ? parsed.data.after : 0);
+  const events = await listEvents(db, job.id, known ? parsed.data.after : 0);
   return Response.json({ job, events, reset: !known, serverTime: Date.now() });
 }

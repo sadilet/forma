@@ -42,7 +42,7 @@ export async function POST(request: Request) {
 
   const parsed = requestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: "That message could not be sent." }, { status: 400 });
-  const project = getProject(parsed.data.projectId);
+  const project = await getProject(parsed.data.projectId);
   if (!project) return Response.json({ error: "This workspace no longer exists." }, { status: 404 });
 
   const focus = localFocus(parsed.data.block, parsed.data.specification);
@@ -67,7 +67,7 @@ export async function POST(request: Request) {
     "",
     describeCanvas(parsed.data.canvas),
     "",
-    researchPrompt(project.id, parsed.data.mode),
+    await researchPrompt(project.id, parsed.data.mode),
   ].join("\n");
 
   try {

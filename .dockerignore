@@ -1,0 +1,10 @@
+.git
+.next
+node_modules
+data
+google-cloud-sdk
+google-cloud-cli-*.tar.gz
+.env*
+!.env.example
+!.env.deploy.example
+*.tsbuildinfo

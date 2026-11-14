@@ -1,7 +1,7 @@
 import fs from "node:fs";
-import type Database from "better-sqlite3";
 import { prepareRepo, readBaseApp, repoDirFor, runtimeDirFor, scratchDirFor } from "./build.ts";
 import type { DeployConfig } from "./config.ts";
+import type { Db } from "./db.ts";
 import { hasReferenceApp } from "./contract.ts";
 import type { DeployStage, EventLevel } from "./contract.ts";
 import { generateApp } from "./generator.ts";
@@ -97,7 +97,7 @@ function chooseBuilder(config: DeployConfig, template: string, llm: Llm | null):
 }
 
 export async function runJob(args: {
-  db: Database.Database;
+  db: Db;
   config: DeployConfig;
   job: ClaimedJob;
   workerId: string;
@@ -110,27 +110,36 @@ export async function runJob(args: {
   const deps = args.deps ?? realDeps;
   let stage: DeployStage = "plan";
 
+  // Events are written one after another, in the order they were logged, without making every caller wait for
+  // the database. A failed write is dropped: a missing log line must never fail a deploy.
+  let writes: Promise<unknown> = Promise.resolve();
   const log = (level: EventLevel, message: string) => {
-    addEvent(db, job.id, stage, level, message);
+    const at = Date.now();
+    const where = stage;
+    writes = writes.then(() => addEvent(db, job.id, where, level, message, at)).catch(() => {});
     if (args.echo) console.log(`[${job.serviceName}] ${stage}: ${message}`);
   };
-  const enter = (next: DeployStage) => {
+  // The page stops reading events when the job is final, so every event must be stored before that.
+  const flush = async () => {
+    await writes;
+  };
+  const enter = async (next: DeployStage) => {
     if (signal.aborted) throw new Stopped("stopped");
     stage = next;
-    setStage(db, job.id, next);
+    await setStage(db, job.id, next);
   };
 
   try {
     // 1. Plan
-    enter("plan");
+    await enter("plan");
     const plan = planFromSnapshot(job.snapshot, job.goal);
-    savePlan(db, job.id, plan);
+    await savePlan(db, job.id, plan);
     log("info", `Plan: ${plan.tasks.length} tasks. ${plan.tasks.map((task) => task.title).join(" → ")}.`);
     for (const warning of plan.warnings.slice(0, MAX_WARNINGS)) log("warn", warning);
     if (plan.warnings.length > MAX_WARNINGS) log("warn", `${plan.warnings.length - MAX_WARNINGS} more open questions are in the plan.`);
 
     // 2. Build
-    enter("build");
+    await enter("build");
     // Start from what the shared remote holds for this project, if one is set up. This is what lets a
     // new machine (or a cleared data/deploy) carry on from the last release instead of starting over.
     await syncFromRemote({ config, repoDir: repoDirFor(config, job.projectId), projectId: job.projectId, signal, log: (level, message) => log(level, message) });
@@ -178,10 +187,11 @@ export async function runJob(args: {
     }
 
     // 3. Ship
-    enter("ship");
+    await enter("ship");
     if (config.dryRun) {
       log("warn", "Dry run: Google Cloud is not called. Nothing is deployed.");
-      if (!finishSuccess(db, job.id, workerId, { url: null, revision: null })) return "lost";
+      await flush();
+      if (!(await finishSuccess(db, job.id, workerId, { url: null, revision: null }))) return "lost";
       return "succeeded";
     }
     log("info", `Deploying ${job.serviceName} to Cloud Run in ${config.region}. The first build takes a few minutes.`);
@@ -208,11 +218,11 @@ export async function runJob(args: {
     );
     if (hidden > 0) log("info", `${hidden} more lines of build output were not shown.`);
     if (signal.aborted) throw new Stopped("stopped");
-    recordShipped(db, job.id, workerId, shipped);
+    await recordShipped(db, job.id, workerId, shipped);
     log("info", `The service is up at ${shipped.url}${shipped.revision ? ` (revision ${shipped.revision})` : ""}.`);
 
     // 4. Verify
-    enter("verify");
+    await enter("verify");
     let healthy = false;
     for (let attempt = 1; attempt <= HEALTH_TRIES && !healthy; attempt += 1) {
       healthy = await deps.health(`${shipped.url}/api/health`, signal);
@@ -228,18 +238,21 @@ export async function runJob(args: {
       );
     }
     log("info", "The app answers on /api/health.");
-    if (!finishSuccess(db, job.id, workerId, { url: shipped.url, revision: shipped.revision || null })) return "lost";
+    await flush();
+    if (!(await finishSuccess(db, job.id, workerId, { url: shipped.url, revision: shipped.revision || null }))) return "lost";
     return "succeeded";
   } catch (error) {
     if (signal.aborted) {
       // "lost": another worker owns the job now, so leave it alone. "shutdown": hand it back to the queue.
       if (signal.reason === "lost") return "lost";
-      releaseJob(db, job.id, workerId);
-      addEvent(db, job.id, "queued", "warn", "The worker stopped. This deploy will start again.");
+      await flush();
+      await releaseJob(db, job.id, workerId);
+      await addEvent(db, job.id, "queued", "warn", "The worker stopped. This deploy will start again.");
       return "released";
     }
     const message = error instanceof Error ? error.message : String(error);
     log("error", message);
-    return finishFailure(db, job.id, workerId, message) ? "failed" : "lost";
+    await flush();
+    return (await finishFailure(db, job.id, workerId, message)) ? "failed" : "lost";
   }
 }

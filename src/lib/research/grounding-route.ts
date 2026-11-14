@@ -26,8 +26,8 @@ export function groundingHandlers(kind: Extract<ResearchKind, "docs" | "standard
       const user = await getCurrentUser();
       if (!user) return Response.json({ error: "Sign in to read grounding." }, { status: 401 });
       const projectId = new URL(request.url).searchParams.get("projectId") ?? "";
-      if (!getProject(projectId)) return Response.json({ error: "This workspace no longer exists." }, { status: 404 });
-      return Response.json({ pack: latestResearchArtifact(projectId, kind) });
+      if (!await getProject(projectId)) return Response.json({ error: "This workspace no longer exists." }, { status: 404 });
+      return Response.json({ pack: await latestResearchArtifact(projectId, kind) });
     },
     async POST(request: Request) {
       const user = await getCurrentUser();
@@ -43,7 +43,7 @@ export function groundingHandlers(kind: Extract<ResearchKind, "docs" | "standard
       }
       const parsed = bodySchema.safeParse(await request.json().catch(() => null));
       if (!parsed.success) return Response.json({ error: "The grounding request was not valid." }, { status: 400 });
-      const project = getProject(parsed.data.projectId);
+      const project = await getProject(parsed.data.projectId);
       if (!project) return Response.json({ error: "This workspace no longer exists." }, { status: 404 });
       const key = `${project.id}:${kind}`;
       if (!claimRun(key)) return Response.json({ error: "That grounding run is already in progress." }, { status: 409 });
@@ -64,7 +64,7 @@ export function groundingHandlers(kind: Extract<ResearchKind, "docs" | "standard
                 goal: parsed.data.projectGoal || project.goal,
                 canvas: parsed.data.canvas,
               });
-        const stored = saveResearchArtifact({
+        const stored = await saveResearchArtifact({
           projectId: project.id,
           kind,
           title: kind === "docs" ? "Documentation pack" : "Engineering standards",

@@ -8,6 +8,6 @@ export const dynamic = "force-dynamic";
 export default async function ProjectsPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/");
-  const projects = listProjects();
+  const projects = await listProjects();
   return <ProjectHome user={user} projects={projects} />;
 }

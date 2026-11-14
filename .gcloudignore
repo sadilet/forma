@@ -1,0 +1,13 @@
+# Used by `gcloud builds submit`. Without this file gcloud would read .gitignore, which does not know about the
+# Google Cloud CLI folder (hundreds of MB) and would upload it with every build.
+.git
+.next
+node_modules
+data
+google-cloud-sdk
+google-cloud-cli-*.tar.gz
+.env*
+!.env.example
+!.env.deploy.example
+*.tsbuildinfo
+.DS_Store

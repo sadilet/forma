@@ -8,7 +8,7 @@ Forma is a collaborative workspace for designing software on an infinite canvas.
 - Semantic blocks: screen, service, database, entity, decision, and note- Real-time collaboration through Liveblocks: shared canvas, named cursors, presence, and collaborator avatars
 - AI Architect for the whole canvas: missing requirements, incomplete flows, and questions to discuss
 - AI Explorer for the selected block, with streaming answers
-- Specifications saved in SQLite, including AI proposals that stay unsaved until someone applies them
+- Specifications saved in Postgres, including AI proposals that stay unsaved until someone applies them
 - Three demo canvases (SlotGuard, TaskFlow, Meeting Notes) plus blank workspaces
 - Deploy: a model writes a working app from any canvas, the app is checked, and a worker puts it online on Google Cloud Run. Deploy again after editing the canvas and the app is updated. See [docs/deploy.md](docs/deploy.md)
 
@@ -38,16 +38,19 @@ Edit `.env.local`:
 | `AI_PROVIDER` | No | `gemini` or `openai`. Empty uses Gemini when its key is present, otherwise OpenAI. |
 | `LIVEBLOCKS_SECRET_KEY` | For collaboration | Secret key from [liveblocks.io](https://liveblocks.io). |
 | `SESSION_SECRET` | No | Signs the session cookie. Defaults to a local demo secret. |
-| `DATABASE_PATH` | No | SQLite file. Defaults to `data/forma.db`. |
+| `DATABASE_URL` | No | Postgres address. Defaults to the database of `docker compose up -d db`. |
 | `NEXT_PUBLIC_TLDRAW_LICENSE_KEY` | No | Removes the tldraw watermark. |
 
+Start the local database (Postgres in Docker), then the app:
+
 ```bash
+docker compose up -d db
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
 
-The first launch creates `data/forma.db` and seeds two users plus the TaskFlow workspace.
+The first launch creates the tables in the database `forma_local` and seeds two users plus the demo workspaces. To run Forma itself on Google Cloud, see [docs/cloud.md](docs/cloud.md).
 
 ## Demo accounts
 

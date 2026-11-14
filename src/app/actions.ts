@@ -27,7 +27,7 @@ export async function login(input: { email: string; password: string; next?: str
   const parsed = credentialsSchema.safeParse(input);
   if (!parsed.success) return { error: "Enter the email and password for a demo account." };
 
-  const user = getUserByEmail(parsed.data.email);
+  const user = await getUserByEmail(parsed.data.email);
   if (!user || !compareSync(parsed.data.password, user.passwordHash)) {
     return { error: "Those credentials do not match a Forma account." };
   }
@@ -60,7 +60,7 @@ export async function createProject(input: { name: string; template: ProjectTemp
   if (!parsed.success) return { error: "Give the workspace a name." };
 
   const id = crypto.randomUUID();
-  createProjectRecord({
+  await createProjectRecord({
     id,
     name: parsed.data.name,
     ownerId: user.id,
@@ -83,12 +83,12 @@ export async function updateProject(input: { id: string; name?: string; goal?: s
   if (!user) return { error: "Sign in to edit this workspace." };
   const parsed = updateSchema.safeParse(input);
   if (!parsed.success) return { error: "That workspace name is not valid." };
-  const project = getProject(parsed.data.id);
+  const project = await getProject(parsed.data.id);
   if (!project) return { error: "This workspace no longer exists." };
   const goalWrite =
     parsed.data.goal === undefined ? "unchanged" : compareAndSet(project.goal, parsed.data.expectedGoal, parsed.data.goal);
   if (goalWrite === "conflict") return { conflict: true as const, goal: project.goal };
-  const next = updateProjectRecord(project.id, {
+  const next = await updateProjectRecord(project.id, {
     name: parsed.data.name,
     goal: goalWrite === "write" ? parsed.data.goal : undefined,
   });

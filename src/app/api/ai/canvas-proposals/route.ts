@@ -35,10 +35,10 @@ export async function POST(request: Request) {
   if ("error" in loaded) return Response.json({ error: loaded.error }, { status: 503 });
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: "That proposal request was not valid." }, { status: 400 });
-  const project = getProject(parsed.data.projectId);
+  const project = await getProject(parsed.data.projectId);
   if (!project) return Response.json({ error: "This workspace no longer exists." }, { status: 404 });
 
-  const citations = citationsFor(project.id, parsed.data.mode);
+  const citations = await citationsFor(project.id, parsed.data.mode);
   const citationIds = new Set(citations.map((citation) => citation.id));
   try {
     const drafted = await loaded.architect.completeJson({
@@ -59,7 +59,7 @@ export async function POST(request: Request) {
         `Mode: ${parsed.data.mode}`,
         parsed.data.block ? `Selected component: ${parsed.data.block.title} [${parsed.data.block.id}]` : "",
         "",
-        researchPrompt(project.id, parsed.data.mode),
+        await researchPrompt(project.id, parsed.data.mode),
         "",
         "Recommendation",
         parsed.data.message,
@@ -83,7 +83,7 @@ export async function POST(request: Request) {
   }
 }
 
-function citationsFor(projectId: string, mode: "global" | "local" | "market" | "leads") {
+async function citationsFor(projectId: string, mode: "global" | "local" | "market" | "leads") {
   if (mode !== "market" && mode !== "leads") return [];
-  return latestResearchArtifact(projectId, mode)?.citations ?? [];
+  return (await latestResearchArtifact(projectId, mode))?.citations ?? [];
 }
