@@ -1,4 +1,10 @@
+import { Outfit } from "next/font/google";
 import { cn } from "@/lib/utils";
+
+const wordmark = Outfit({
+  subsets: ["latin"],
+  weight: ["600"],
+});
 
 export function Logo({ className }: { className?: string }) {
   return (
@@ -20,7 +26,7 @@ export function Logo({ className }: { className?: string }) {
           opacity="0.4"
         />
       </svg>
-      <span className="font-forma text-[15px] font-semibold tracking-[-0.035em]">Forma</span>
+      <span className={cn(wordmark.className, "text-[15px] font-semibold tracking-[-0.035em]")}>Forma</span>
     </span>
   );
 }
