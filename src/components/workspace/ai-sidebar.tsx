@@ -2,9 +2,23 @@
 
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { toast } from "sonner";
-import { Loader2, Sparkles, X } from "lucide-react";
+import {
+  ClipboardList,
+  Component,
+  FileText,
+  LayoutGrid,
+  Loader2,
+  MessagesSquare,
+  ShieldCheck,
+  Sparkles,
+  Store,
+  Users,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import type { Editor } from "tldraw";
 import { Chat } from "@/components/workspace/architect/chat";
+import { EngineeringTab } from "@/components/workspace/architect/engineering-tab";
 import { LeadsTab } from "@/components/workspace/architect/leads-tab";
 import { MarketTab } from "@/components/workspace/architect/market-tab";
 import { ProposalList } from "@/components/workspace/architect/proposals";
@@ -33,10 +47,12 @@ import {
 } from "@/lib/collab/draft";
 import { versionOf, type SyncVersions } from "@/lib/collab/sync";
 import type { ProjectRecord } from "@/lib/projects";
+import { isArchitectTab, type ArchitectTab } from "@/lib/architect/tabs";
+import { FORMA_NAVIGATE_EVENT } from "@/lib/voice/navigation";
 
 type Mode = "architect" | "explorer";
 type ExplorerTab = "discuss" | "spec";
-type CanvasTab = "review" | "market" | "leads";
+type CanvasTab = ArchitectTab;
 
 export function AiSidebar({
   open,
@@ -66,49 +82,60 @@ export function AiSidebar({
   const goalText = draftValue(goalDraft);
   const block = ui.block;
   const blockKey = mode === "explorer" && block ? block.id : "";
-  const [wide, setWide] = useState(false);
   const [canvasTab, setCanvasTab] = useState<CanvasTab>("review");
   const [tab, setTab] = useState<ExplorerTab>("discuss");
+  const [badgeClearance, setBadgeClearance] = useState(false);
   const architectTab = mode === "explorer" ? "component" : canvasTab;
+
+  useEffect(() => {
+    const update = () => setBadgeClearance(Boolean(document.getElementById("liveblocks-badge")));
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(document.body, { childList: true });
+    return () => observer.disconnect();
+  }, []);
+
+  // The chat bar and Gemini Live open a tab when they flag a question. Follow them, and switch to the canvas view.
+  useEffect(() => {
+    const follow = (event: Event) => {
+      const tab = (event as CustomEvent<string>).detail;
+      if (isArchitectTab(tab)) setCanvasTab(tab);
+    };
+    window.addEventListener(FORMA_NAVIGATE_EVENT, follow);
+    return () => window.removeEventListener(FORMA_NAVIGATE_EVENT, follow);
+  }, []);
 
   if (!open) return null;
 
   return (
-    <aside className={`flex h-full shrink-0 flex-col border-l border-border bg-[#121318] ${wide ? "w-[min(560px,100%)]" : "w-[min(420px,100%)]"}`}>
+    <aside className={`relative z-30 flex h-full w-[min(32rem,100%)] shrink-0 flex-col border-l border-border bg-surface ${badgeClearance ? "pb-14" : ""}`}>
       {live ? <FormaPresence tab={architectTab} /> : null}
       <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
-        <Sparkles className="h-4 w-4 text-accent" />
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium">Architect</p>
-          <p className="truncate text-xs text-muted-foreground">
-            {mode === "explorer" && block
-              ? `${block.props.title} · ${BLOCK_META[block.props.kind].label}`
-              : "Whole canvas"}
-          </p>
-        </div>
-        <button type="button" onClick={() => setWide((value) => !value)} className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-white/6 hover:text-foreground">
-          {wide ? "Narrow" : "Widen"}
-        </button>
-        <button type="button" aria-label="Close architect" onClick={onClose} className="rounded-md p-1 text-muted-foreground hover:bg-white/6 hover:text-foreground">
+        <Sparkles className="h-4 w-4 shrink-0 text-accent" />
+        <p className="min-w-0 flex-1 truncate text-sm font-medium">
+          {mode === "explorer" && block ? block.props.title : "Architect"}
+        </p>
+        <button type="button" aria-label="Close architect" onClick={onClose} className="rounded-md p-1 text-muted-foreground hover:bg-surface-hover hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
           <X className="h-4 w-4" />
         </button>
       </div>
 
       <div className="grid grid-cols-2 gap-1 p-2">
-        <ModeButton active={mode === "architect"} onClick={() => onMode("architect")}>
+        <ModeButton icon={LayoutGrid} active={mode === "architect"} onClick={() => onMode("architect")}>
           Canvas
         </ModeButton>
-        <ModeButton active={mode === "explorer"} onClick={() => onMode("explorer")} disabled={!block}>
+        <ModeButton icon={Component} active={mode === "explorer"} onClick={() => onMode("explorer")} disabled={!block}>
           Component
         </ModeButton>
       </div>
 
       {mode === "architect" ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="grid grid-cols-3 gap-1 px-2 pt-1">
-            <ModeButton active={canvasTab === "review"} onClick={() => setCanvasTab("review")}>Review</ModeButton>
-            <ModeButton active={canvasTab === "market"} onClick={() => setCanvasTab("market")}>Market</ModeButton>
-            <ModeButton active={canvasTab === "leads"} onClick={() => setCanvasTab("leads")}>Leads</ModeButton>
+          <div className="grid grid-cols-4 gap-1 px-2">
+            <ModeButton icon={ClipboardList} active={canvasTab === "review"} onClick={() => setCanvasTab("review")}>Review</ModeButton>
+            <ModeButton icon={Store} active={canvasTab === "market"} onClick={() => setCanvasTab("market")}>Market</ModeButton>
+            <ModeButton icon={Users} active={canvasTab === "leads"} onClick={() => setCanvasTab("leads")}>Leads</ModeButton>
+            <ModeButton icon={ShieldCheck} active={canvasTab === "engineering"} onClick={() => setCanvasTab("engineering")}>Engineering</ModeButton>
           </div>
           {canvasTab === "review" ? (
             <ArchitectPane
@@ -136,6 +163,15 @@ export function AiSidebar({
               goal={goalText}
               refreshToken={versionOf(versions, "leads")}
               chatToken={versionOf(versions, "conversation", "__leads__")}
+            />
+          ) : null}
+          {canvasTab === "engineering" ? (
+            <EngineeringTab
+              editor={editor}
+              project={project}
+              goal={goalText}
+              refreshToken={versionOf(versions, "docs") + versionOf(versions, "standards")}
+              chatToken={versionOf(versions, "conversation", "__engineering__")}
             />
           ) : null}
         </div>
@@ -224,7 +260,7 @@ function ArchitectPane({
           <Textarea
             id="forma-goal"
             value={goal}
-            rows={3}
+            rows={2}
             onChange={(event) => {
               const value = event.target.value;
               setGoal((current) => editDraft(current, value));
@@ -237,7 +273,7 @@ function ArchitectPane({
           />
         </label>
         {goalDraft.incoming ? (
-          <div className="mt-2 rounded-xl border border-[#f0a05a]/30 bg-[#f0a05a]/10 px-3 py-2 text-xs leading-5">
+          <div className="mt-2 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-5">
             <p>A teammate saved a different goal:</p>
             <p className="mt-1 line-clamp-3 text-foreground/80">{goalDraft.incoming.value || "(empty)"}</p>
             <div className="mt-1.5 flex gap-3">
@@ -277,17 +313,13 @@ function ArchitectPane({
             ))}
             <ProposalList proposals={analysis.canvasProposals ?? []} citations={[]} editor={editor} />
           </div>
-        ) : (
-          <p className="mt-4 text-sm leading-6 text-muted-foreground">
-            Review reads the canvas and asks what the team still has to decide. A conclusion can be applied onto a decision or note.
-          </p>
-        )}
+        ) : null}
       </div>
       <Chat
         project={project}
         editor={editor}
         goal={goal}
-        mode="global"
+        mode="review"
         block={null}
         blockKey=""
         refreshToken={chatToken}
@@ -329,10 +361,10 @@ function ExplorerPane({
     <>
       <BlockFields editor={editor} block={block} />
       <div className="grid grid-cols-2 gap-1 px-2">
-        <ModeButton active={tab === "discuss"} onClick={() => setTab("discuss")}>
+        <ModeButton icon={MessagesSquare} active={tab === "discuss"} onClick={() => setTab("discuss")}>
           Discuss
         </ModeButton>
-        <ModeButton active={tab === "spec"} onClick={() => setTab("spec")}>
+        <ModeButton icon={FileText} active={tab === "spec"} onClick={() => setTab("spec")}>
           Specification
         </ModeButton>
       </div>
@@ -392,7 +424,7 @@ function BlockFields({ editor, block }: { editor: Editor; block: NonNullable<Can
         aria-label="Component title"
         onChange={(event) => setTitle(event.target.value)}
         onBlur={() => commit({ title })}
-        className="bg-transparent text-sm font-medium outline-none"
+        className="-mx-2 rounded-md bg-transparent px-2 py-1 text-sm font-medium outline-none transition-colors hover:bg-surface-hover focus-visible:bg-surface-hover focus-visible:ring-2 focus-visible:ring-accent/60"
       />
       <Textarea
         value={description}
@@ -534,7 +566,7 @@ function SpecEditor({
   return (
     <div className="forma-scroll min-h-0 flex-1 overflow-y-auto px-3 py-3">
       {incoming ? (
-        <div className="mb-3 rounded-xl border border-[#f0a05a]/30 bg-[#f0a05a]/10 px-3 py-2 text-xs leading-5">
+        <div className="mb-3 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-5">
           A teammate saved this specification after you started editing. Your draft is unchanged.
           <div className="mt-1.5 flex gap-3">
             <button
@@ -611,12 +643,12 @@ function SpecEditor({
 function FindingCard({ finding, onFocus }: { finding: Finding; onFocus: () => void }) {
   const tone =
     finding.severity === "critical"
-      ? "text-[#f0a3a8]"
+      ? "text-danger"
       : finding.severity === "warning"
-        ? "text-[#f0a05a]"
-        : "text-[#6ea8fe]";
+        ? "text-warning"
+        : "text-info";
   return (
-    <article className="rounded-xl border border-border bg-white/[0.02] p-3">
+    <article className="rounded-xl border border-border bg-surface-subtle p-3">
       <p className={`text-[11px] font-semibold uppercase tracking-[0.14em] ${tone}`}>
         {finding.severity} · {finding.category.replaceAll("-", " ")}
       </p>
@@ -633,11 +665,13 @@ function FindingCard({ finding, onFocus }: { finding: Finding; onFocus: () => vo
 }
 
 function ModeButton({
+  icon: Icon,
   active,
   disabled,
   onClick,
   children,
 }: {
+  icon: LucideIcon;
   active: boolean;
   disabled?: boolean;
   onClick: () => void;
@@ -648,17 +682,18 @@ function ModeButton({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className={`h-8 rounded-lg text-xs font-medium disabled:opacity-40 ${
-        active ? "bg-white/10 text-foreground" : "text-muted-foreground hover:bg-white/5"
+      className={`flex h-9 items-center justify-center gap-1.5 rounded-lg px-2 text-[13px] font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40 ${
+        active ? "bg-accent-soft text-foreground" : "text-muted-foreground hover:bg-surface-hover hover:text-foreground"
       }`}
     >
+      <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
       {children}
     </button>
   );
 }
 
 function ErrorNote({ message }: { message: string }) {
-  return <p className="mt-3 rounded-lg border border-[#f0a3a8]/30 bg-[#f0a3a8]/10 px-3 py-2 text-sm leading-5 text-[#f0a3a8]">{message}</p>;
+  return <p className="mt-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm leading-5 text-danger">{message}</p>;
 }
 
 async function saveGoal(projectId: string, draft: Draft<string>, setGoal: Dispatch<SetStateAction<Draft<string>>>) {

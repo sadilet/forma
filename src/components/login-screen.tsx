@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { login } from "@/app/actions";
 import { Logo } from "@/components/logo";
+import { ThemeToggle } from "@/components/theme-provider";
 import { Button, Input } from "@/components/ui";
 
 const DEMOS = [
@@ -39,10 +41,14 @@ export function LoginScreen({ next }: { next?: string }) {
   return (
     <main className="grid min-h-screen lg:grid-cols-[1.1fr_0.9fr]">
       <section className="flex flex-col justify-between px-8 py-8 sm:px-14">
-        <Logo />
+        <div className="flex items-center justify-between gap-4">
+          <Link href="/" aria-label="Forma home" className="rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent">
+            <Logo />
+          </Link>
+          <ThemeToggle />
+        </div>
         <div className="max-w-xl py-16">
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-accent">Product architect</p>
-          <h1 className="mt-4 max-w-lg text-5xl font-semibold leading-[1.05] tracking-[-0.04em]">
+          <h1 className="max-w-lg text-5xl font-semibold leading-[1.05] tracking-[-0.04em]">
             Draw the product.
             <br />
             Specify it together.
@@ -71,7 +77,7 @@ export function LoginScreen({ next }: { next?: string }) {
                   setPassword("demo");
                   void submit(demo.email, "demo");
                 }}
-                className="flex items-center gap-3 rounded-xl border border-border bg-white/[0.02] px-3 py-3 text-left transition-colors hover:bg-white/[0.05] disabled:opacity-50"
+                className="flex items-center gap-3 rounded-xl border border-border bg-surface-subtle px-3 py-3 text-left transition-colors hover:bg-surface-hover disabled:opacity-50"
               >
                 <span
                   className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold text-[#101114]"
@@ -108,7 +114,7 @@ export function LoginScreen({ next }: { next?: string }) {
               onChange={(event) => setPassword(event.target.value)}
               aria-label="Password"
             />
-            {error ? <p className="text-sm text-[#f0a3a8]">{error}</p> : null}
+            {error ? <p className="text-sm text-danger">{error}</p> : null}
             <Button type="submit" variant="primary" disabled={pending}>
               {pending ? "Entering…" : "Continue"}
             </Button>

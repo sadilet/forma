@@ -5,6 +5,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { logout, updateProject } from "@/app/actions";
 import { Logo } from "@/components/logo";
+import { ThemeToggle } from "@/components/theme-provider";
 import { Button, Modal } from "@/components/ui";
 import { LiveAvatars, LiveStatus } from "@/components/workspace/presence";
 import type { SessionUser } from "@/lib/auth";
@@ -39,11 +40,11 @@ export function TopNav({
   }
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-[#0e0f12]/95 px-3">
+    <header className="flex h-12 w-full min-w-0 shrink-0 items-center gap-2 border-b border-border bg-surface px-3 sm:gap-3">
       <Link href="/projects" className="shrink-0" aria-label="All workspaces">
         <Logo />
       </Link>
-      <span className="h-4 w-px bg-white/10" />
+      <span className="hidden h-4 w-px shrink-0 bg-border sm:block" />
       <input
         value={name}
         aria-label="Workspace name"
@@ -52,11 +53,11 @@ export function TopNav({
         onKeyDown={(event) => {
           if (event.key === "Enter") event.currentTarget.blur();
         }}
-        className="w-40 bg-transparent text-sm font-medium outline-none sm:w-56"
+        className="min-w-0 w-28 shrink rounded-md bg-transparent px-2 py-1 text-sm font-medium outline-none transition-colors hover:bg-surface-hover focus-visible:bg-surface-hover focus-visible:ring-2 focus-visible:ring-accent/60 sm:w-40"
       />
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
         {live ? <LiveAvatars /> : <SoloAvatar user={user} />}
-        <span className="hidden shrink-0 sm:block">
+        <span className="hidden shrink-0 xl:block">
           {live ? <LiveStatus /> : <span className="whitespace-nowrap text-xs text-muted-foreground">Solo</span>}
         </span>
         <Button variant="quiet" size="sm" onClick={() => setShareOpen(true)}>
@@ -66,6 +67,7 @@ export function TopNav({
           <Sparkles className="h-3.5 w-3.5" />
           Architect
         </Button>
+        <ThemeToggle />
         <form action={logout}>
           <Button type="submit" variant="ghost" size="sm">
             Sign out
@@ -111,7 +113,7 @@ function ShareDialog({
       }
     >
       <div className="grid gap-3">
-        <code className="block overflow-hidden rounded-lg border border-border bg-black/30 px-3 py-2 text-xs text-muted-foreground">
+        <code className="block overflow-hidden rounded-lg border border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
           {url}
         </code>
         <Button

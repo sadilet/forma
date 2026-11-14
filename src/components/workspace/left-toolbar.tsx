@@ -1,26 +1,21 @@
 "use client";
 
 import {
-  AppWindow,
   ArrowUpRight,
   Circle,
-  Database,
-  FileText,
-  GitBranch,
   Hand,
   MousePointer2,
   Pencil,
-  Server,
   Square,
   StickyNote,
   Trash2,
   Type,
-  UserRound,
   type LucideIcon,
 } from "lucide-react";
 import { GeoShapeGeoStyle, createShapeId, type Editor } from "tldraw";
 import { Hint } from "@/components/ui";
-import { BLOCK_META, FORMA_BLOCK_TYPE, type BlockKind } from "@/lib/canvas/kinds";
+import { BLOCK_ICONS } from "@/lib/canvas/block-icons";
+import { BLOCK_META, FORMA_BLOCK_TYPE, blockInk, type BlockKind } from "@/lib/canvas/kinds";
 import type { CanvasUi } from "@/components/workspace/canvas-stage";
 
 const TOOLS: { id: string; label: string; shortcut?: string; icon: LucideIcon; geo?: string }[] = [
@@ -34,49 +29,44 @@ const TOOLS: { id: string; label: string; shortcut?: string; icon: LucideIcon; g
   { id: "text", label: "Text", shortcut: "T", icon: Type },
 ];
 
-const BLOCKS: { kind: BlockKind; icon: LucideIcon }[] = [
-  { kind: "screen", icon: AppWindow },
-  { kind: "service", icon: Server },
-  { kind: "database", icon: Database },
-  { kind: "entity", icon: UserRound },
-  { kind: "decision", icon: GitBranch },
-  { kind: "note", icon: FileText },
-];
+const BLOCKS: BlockKind[] = ["screen", "service", "database", "entity", "decision", "note"];
 
 export function LeftToolbar({ editor, ui }: { editor: Editor | null; ui: CanvasUi }) {
   return (
-    <div className="pointer-events-none absolute left-3 top-1/2 z-20 -translate-y-1/2">
-      <div className="pointer-events-auto flex max-h-[calc(100vh-8rem)] flex-col gap-1 overflow-y-auto rounded-2xl border border-border bg-[#14161b]/95 p-1.5 shadow-xl backdrop-blur">
+    <div className="pointer-events-none absolute bottom-48 left-3 top-3 z-20 flex items-center @min-[840px]:bottom-28">
+      <div className="pointer-events-auto flex max-h-full flex-col gap-1 overflow-y-auto rounded-2xl border border-border bg-surface p-1.5 shadow-panel">
         {TOOLS.slice(0, 2).map((tool) => (
           <ToolButton key={tool.label} tool={tool} editor={editor} ui={ui} />
         ))}
-        <span className="mx-1 my-1 h-px bg-white/10" />
+        <span className="mx-1 my-1 h-px bg-border" />
         {TOOLS.slice(2).map((tool) => (
           <ToolButton key={tool.label} tool={tool} editor={editor} ui={ui} />
         ))}
-        <span className="mx-1 my-1 h-px bg-white/10" />
-        {BLOCKS.map((block) => (
-          <Hint key={block.kind} label={BLOCK_META[block.kind].label}>
-            <button
-              type="button"
-              aria-label={`Place ${BLOCK_META[block.kind].label}`}
-              disabled={!editor}
-              onClick={() => editor && placeBlock(editor, block.kind)}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-white/8 hover:text-foreground disabled:opacity-40"
-              style={{ color: undefined }}
-            >
-              <block.icon className="h-4 w-4" style={{ color: BLOCK_META[block.kind].color }} />
-            </button>
-          </Hint>
-        ))}
-        <span className="mx-1 my-1 h-px bg-white/10" />
+        <span className="mx-1 my-1 h-px bg-border" />
+        {BLOCKS.map((kind) => {
+          const Icon = BLOCK_ICONS[kind];
+          return (
+            <Hint key={kind} label={BLOCK_META[kind].label}>
+              <button
+                type="button"
+                aria-label={`Place ${BLOCK_META[kind].label}`}
+                disabled={!editor}
+                onClick={() => editor && placeBlock(editor, kind)}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-surface-hover hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40"
+              >
+                <Icon className="h-4 w-4" style={{ color: blockInk(BLOCK_META[kind].color) }} />
+              </button>
+            </Hint>
+          );
+        })}
+        <span className="mx-1 my-1 h-px bg-border" />
         <Hint label="Delete" shortcut="⌫">
           <button
             type="button"
             aria-label="Delete selection"
             disabled={!editor || ui.selectedCount === 0}
             onClick={() => editor && deleteSelection(editor)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-white/8 hover:text-[#f0a3a8] disabled:opacity-40"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-surface-hover hover:text-danger disabled:opacity-40"
           >
             <Trash2 className="h-4 w-4" />
           </button>
@@ -104,8 +94,8 @@ function ToolButton({
         aria-pressed={active}
         disabled={!editor}
         onClick={() => editor && selectTool(editor, tool.id, tool.geo)}
-        className={`flex h-8 w-8 items-center justify-center rounded-lg disabled:opacity-40 ${
-          active ? "bg-white/12 text-foreground" : "text-muted-foreground hover:bg-white/8 hover:text-foreground"
+        className={`flex h-8 w-8 items-center justify-center rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40 ${
+          active ? "bg-accent-soft text-accent" : "text-muted-foreground hover:bg-surface-hover hover:text-foreground"
         }`}
       >
         <tool.icon className="h-4 w-4" />

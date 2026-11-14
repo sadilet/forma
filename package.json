@@ -11,14 +11,15 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test src/lib/collab/messages.test.ts src/lib/collab/sync.test.ts src/lib/collab/draft.test.ts src/lib/research/citations.test.ts src/lib/research/competitors.test.ts src/lib/research/locale.test.ts src/lib/research/proposals.test.ts",
+    "test": "node --experimental-strip-types --test src/lib/collab/messages.test.ts src/lib/collab/sync.test.ts src/lib/collab/draft.test.ts src/lib/research/citations.test.ts src/lib/research/competitors.test.ts src/lib/research/locale.test.ts src/lib/research/proposals.test.ts src/lib/ai/decision.test.ts src/lib/canvas/scaffold-schema.test.ts src/lib/voice/voice.test.ts",
     "test:deploy": "node --experimental-strip-types --test src/lib/deploy/*.test.ts",
     "cloud:deploy": "node --experimental-strip-types scripts/cloud-deploy.ts",
+    "voice:relay": "node --experimental-strip-types --env-file-if-exists=.env.local scripts/voice-relay.ts",
     "deploy:worker": "node --experimental-strip-types --env-file-if-exists=.env.local --env-file-if-exists=.env.deploy scripts/deploy-worker.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
-    "@google/genai": "^2.32.0",
+    "@google/genai": "^3.3.0",
     "@liveblocks/client": "^3.25.0",
     "@liveblocks/node": "^3.25.0",
     "@liveblocks/react": "^3.25.0",
@@ -46,6 +47,7 @@
     "sonner": "^2.0.8",
     "tailwind-merge": "^3.7.0",
     "tldraw": "^5.1.1",
+    "ws": "^8.23.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
@@ -55,6 +57,7 @@
     "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/ws": "^8.18.2",
     "drizzle-kit": "^0.31.11",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",

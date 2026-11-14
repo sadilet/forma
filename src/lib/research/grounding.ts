@@ -31,28 +31,35 @@ export async function runDocsGrounding(input: {
 }): Promise<{ pack: DocPack; citations: Citation[]; queryMeta: QueryMeta }> {
   const failures: string[] = [];
   const packages = await inferPackages(input, failures);
+  // Look up every package at once. Sequential search+scrape was the slow part of Engineering grounding.
+  const fetched = await Promise.all(
+    packages.map(async (item) => {
+      const domain = item.docsDomain.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+      const results = await settleList(
+        input.source.searchWeb({
+          query: item.query,
+          includeDomains: domain ? [domain] : undefined,
+          numResults: 2,
+        }),
+        failures,
+        `Docs search for ${item.packageName} was unavailable.`,
+      );
+      const page = results[0];
+      if (!page) return null;
+      const markdown = await settleText(
+        input.source.scrapeMarkdown(page.url),
+        failures,
+        `Could not read docs for ${item.packageName}.`,
+      );
+      return { hit: { ...page, sourceKind: "docs" as const }, page: markdown ? { packageName: item.packageName, url: page.url, markdown } : null };
+    }),
+  );
   const hits: CitationHit[] = [];
   const pages: { packageName: string; url: string; markdown: string }[] = [];
-  for (const item of packages) {
-    const domain = item.docsDomain.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-    const results = await settleList(
-      input.source.searchWeb({
-        query: item.query,
-        includeDomains: domain ? [domain] : undefined,
-        numResults: 2,
-      }),
-      failures,
-      `Docs search for ${item.packageName} was unavailable.`,
-    );
-    const page = results[0];
-    if (!page) continue;
-    hits.push({ ...page, sourceKind: "docs" });
-    const markdown = await settleText(
-      input.source.scrapeMarkdown(page.url),
-      failures,
-      `Could not read docs for ${item.packageName}.`,
-    );
-    if (markdown) pages.push({ packageName: item.packageName, url: page.url, markdown });
+  for (const item of fetched) {
+    if (!item) continue;
+    hits.push(item.hit);
+    if (item.page) pages.push(item.page);
   }
   const citations = catalogFromHits(hits);
   if (citations.length === 0) {
@@ -105,10 +112,16 @@ export async function runStandardsGrounding(input: {
 }): Promise<{ pack: StandardsPack; citations: Citation[]; queryMeta: QueryMeta }> {
   const failures: string[] = [];
   const surfaces = await inferSurfaces(input);
+  // Standards surfaces are independent, so ask them together instead of one after another.
+  const answered = await Promise.all(
+    surfaces.map(async (surface) => {
+      const answer = await settleAnswer(input.source, surface.question, failures);
+      return { surface, answer };
+    }),
+  );
   const hits: CitationHit[] = [];
   const notes: string[] = [];
-  for (const surface of surfaces) {
-    const answer = await settleAnswer(input.source, surface.question, failures);
+  for (const { surface, answer } of answered) {
     for (const url of answer.sources) {
       hits.push({ title: surface.category, url, snippet: surface.question, sourceKind: "standard" });
     }

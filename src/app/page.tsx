@@ -1,18 +1,16 @@
-import { redirect } from "next/navigation";
-import { LoginScreen } from "@/components/login-screen";
+import type { Metadata } from "next";
+import { LandingPage } from "@/components/landing/landing-page";
 import { getCurrentUser } from "@/lib/auth";
-import { safeNextPath } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-export default async function Home({
-  searchParams,
-}: {
-  searchParams: Promise<{ next?: string }>;
-}) {
+export const metadata: Metadata = {
+  title: { absolute: "Forma: figure out the product, then build it" },
+  description:
+    "A real-time collaborative studio. Sketch the idea, check it against the real world with an AI collaborator, settle the spec with your team, and build from the same context.",
+};
+
+export default async function Home() {
   const user = await getCurrentUser();
-  const params = await searchParams;
-  const next = safeNextPath(params.next);
-  if (user) redirect(next);
-  return <LoginScreen next={params.next ? next : undefined} />;
+  return <LandingPage signedIn={Boolean(user)} videoUrl={process.env.PRODUCT_VIDEO_URL} />;
 }

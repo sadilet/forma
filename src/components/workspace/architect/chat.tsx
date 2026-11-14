@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Loader2, Send } from "lucide-react";
 import type { Editor } from "tldraw";
+import { threadFor, useArchitectLive } from "@/components/workspace/architect/architect-live";
 import { ProposalList } from "@/components/workspace/architect/proposals";
 import { Button, Textarea } from "@/components/ui";
 import type { CanvasUi } from "@/components/workspace/canvas-stage";
@@ -9,10 +11,12 @@ import { extractCanvas } from "@/lib/canvas/extract";
 import type { BlockKind } from "@/lib/canvas/kinds";
 import type { CanvasProposal, ChatMessage, Specification } from "@/lib/ai/schemas";
 import { suggestionsFor } from "@/lib/ai/prompt";
+import { tabForBlockKey, type ChatMode } from "@/lib/architect/tabs";
 import type { Citation } from "@/lib/research/citations";
 import type { ProjectRecord } from "@/lib/projects";
 
-export type ChatMode = "global" | "local" | "market" | "leads";
+// A stable empty list, so memoised values that depend on the loaded thread do not recompute while it loads.
+const NO_MESSAGES: ChatMessage[] = [];
 
 export function Chat({
   project,
@@ -31,21 +35,40 @@ export function Chat({
   blockKey: string;
   refreshToken: number;
 }) {
-  const [history, setHistory] = useState<{ key: string; messages: ChatMessage[] }>({ key: "", messages: [] });
+  const [history, setHistory] = useState<{
+    key: string;
+    messages: ChatMessage[];
+  }>({ key: "", messages: [] });
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [proposals, setProposals] = useState<Record<string, { proposals: CanvasProposal[]; citations: Citation[] }>>({});
+  const [proposals, setProposals] = useState<Record<string, { proposals: CanvasProposal[]; citations: Citation[] }>>(
+    {},
+  );
   const streamingRef = useRef(false);
+  const scroller = useRef<HTMLDivElement>(null);
   const kind: BlockKind | "global" = block ? block.props.kind : "global";
   const historyKey = `${project.id}:${blockKey}`;
   const loadingHistory = history.key !== historyKey;
-  const messages = loadingHistory ? [] : history.messages;
+  const messages = loadingHistory ? NO_MESSAGES : history.messages;
+
+  // Canvas tabs share the architect's ask path, pinned to the tab the person is on. A component keeps its own send.
+  const architect = useArchitectLive();
+  const overlay = threadFor(architect.threads, blockKey);
+  const routedTab = mode === "local" ? null : tabForBlockKey(blockKey);
+  const shown = useMemo(() => {
+    if (!routedTab) return messages;
+    const known = new Set(messages.map((message) => message.id));
+    return [...messages, ...overlay.messages.filter((message) => !known.has(message.id))];
+  }, [routedTab, messages, overlay.messages]);
 
   function setMessages(next: ChatMessage[] | ((current: ChatMessage[]) => ChatMessage[])) {
     setHistory((current) => {
       const base = current.key === historyKey ? current.messages : [];
-      return { key: historyKey, messages: typeof next === "function" ? next(base) : next };
+      return {
+        key: historyKey,
+        messages: typeof next === "function" ? next(base) : next,
+      };
     });
   }
 
@@ -68,13 +91,30 @@ export function Chat({
     };
   }, [project.id, blockKey, historyKey, refreshToken]);
 
+  useEffect(() => {
+    const node = scroller.current;
+    if (!node) return;
+    node.scrollTop = node.scrollHeight;
+  }, [shown, streaming]);
+
   async function send(text: string) {
     const content = text.trim();
     if (!content || !editor || streaming) return;
-    const userMessage: ChatMessage = { id: createId(), role: "user", content, createdAt: now() };
+    const userMessage: ChatMessage = {
+      id: createId(),
+      role: "user",
+      content,
+      createdAt: now(),
+    };
     const prior = [...messages, userMessage];
     const assistantId = createId();
-    setMessages(prior);
+    const waiting: ChatMessage = {
+      id: assistantId,
+      role: "assistant",
+      content: "",
+      createdAt: now(),
+    };
+    setMessages([...prior, waiting]);
     setDraft("");
     setStreaming(true);
     streamingRef.current = true;
@@ -89,10 +129,18 @@ export function Chat({
           projectGoal: goal,
           canvas: extractCanvas(editor),
           block: block
-            ? { id: block.id, kind: block.props.kind, title: block.props.title, description: block.props.description }
+            ? {
+                id: block.id,
+                kind: block.props.kind,
+                title: block.props.title,
+                description: block.props.description,
+              }
             : null,
           specification: mode === "local" ? await loadSpecification(project.id, blockKey) : null,
-          messages: prior.map((message) => ({ role: message.role, content: message.content })),
+          messages: prior.map((message) => ({
+            role: message.role,
+            content: message.content,
+          })),
         }),
       });
       if (!response.ok || (response.headers.get("content-type") ?? "").includes("application/json")) {
@@ -103,19 +151,32 @@ export function Chat({
       if (!reader) throw new Error("The architect returned an empty response.");
       const decoder = new TextDecoder();
       let answer = "";
-      setMessages((current) => [...current, { id: assistantId, role: "assistant", content: "", createdAt: now() }]);
       while (true) {
         const chunk = await reader.read();
         if (chunk.done) break;
         answer += decoder.decode(chunk.value, { stream: true });
         const next = answer;
-        setMessages((current) => current.map((message) => (message.id === assistantId ? { ...message, content: next } : message)));
+        setMessages((current) =>
+          current.map((message) => (message.id === assistantId ? { ...message, content: next } : message)),
+        );
       }
-      const saved = [...prior, { id: assistantId, role: "assistant" as const, content: answer, createdAt: now() }];
+      const saved = [
+        ...prior,
+        {
+          id: assistantId,
+          role: "assistant" as const,
+          content: answer,
+          createdAt: now(),
+        },
+      ];
       const savedResponse = await fetch("/api/conversations", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: project.id, blockId: blockKey, messages: saved }),
+        body: JSON.stringify({
+          projectId: project.id,
+          blockId: blockKey,
+          messages: saved,
+        }),
       });
       const savedData = await savedResponse.json();
       setMessages(savedResponse.ok && Array.isArray(savedData.messages) ? savedData.messages : saved);
@@ -130,7 +191,12 @@ export function Chat({
             canvas: extractCanvas(editor),
             message: answer,
             block: block
-              ? { id: block.id, kind: block.props.kind, title: block.props.title, description: block.props.description }
+              ? {
+                  id: block.id,
+                  kind: block.props.kind,
+                  title: block.props.title,
+                  description: block.props.description,
+                }
               : null,
           }),
         });
@@ -138,11 +204,17 @@ export function Chat({
         if (proposalResponse.ok && Array.isArray(proposalData.proposals) && proposalData.proposals.length > 0) {
           setProposals((current) => ({
             ...current,
-            [assistantId]: { proposals: proposalData.proposals, citations: proposalData.citations ?? [] },
+            [assistantId]: {
+              proposals: proposalData.proposals,
+              citations: proposalData.citations ?? [],
+            },
           }));
         }
       }
     } catch (caught) {
+      setMessages((current) =>
+        current.filter((message) => message.id !== assistantId || message.content.trim().length > 0),
+      );
       setError(caught instanceof Error ? caught.message : "The architect could not respond.");
     } finally {
       streamingRef.current = false;
@@ -150,83 +222,171 @@ export function Chat({
     }
   }
 
+  const working = routedTab !== null && architect.busy;
+
+  // A question typed in Review, Market, Leads, or Engineering stays on that tab.
+  function askHere(text: string) {
+    const content = text.trim();
+    if (!content || !editor || streaming || working) return;
+    if (routedTab && architect.ready) {
+      setDraft("");
+      void architect.ask(content, { tab: routedTab });
+      return;
+    }
+    void send(content);
+  }
+
   const prompt =
     mode === "market"
       ? "Ask what this means for the canvas"
       : mode === "leads"
         ? "Ask who this product is for"
-        : mode === "local"
-          ? "Ask about this component"
-          : "Ask about the canvas";
+        : mode === "engineering"
+          ? "Ask which docs and standards apply"
+          : mode === "local"
+            ? "Ask about this component"
+            : "Ask about the canvas";
+
+  const prompts = suggestions(mode, kind);
+  const last = shown.at(-1);
+  const showFollowUps =
+    !loadingHistory && !streaming && !working && last?.role === "assistant" && last.content.trim().length > 0;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col border-t border-border">
-      <div className="forma-scroll min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
+      <div ref={scroller} className="forma-scroll min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
         {loadingHistory ? <p className="text-xs text-muted-foreground">Loading conversation…</p> : null}
-        {messages.length === 0 && !loadingHistory ? (
+        {shown.length === 0 && !loadingHistory ? (
           <div className="grid gap-2">
             <p className="text-sm leading-6 text-muted-foreground">{emptyCopy(mode, block)}</p>
-            <div className="flex flex-wrap gap-1.5">
-              {suggestions(mode, kind).map((suggestion) => (
-                <button
-                  key={suggestion}
-                  type="button"
-                  disabled={streaming || !editor}
-                  onClick={() => void send(suggestion)}
-                  className="rounded-full border border-border px-2.5 py-1 text-left text-xs text-muted-foreground hover:border-accent/40 hover:text-foreground disabled:opacity-40"
-                >
-                  {suggestion}
-                </button>
-              ))}
-            </div>
+            <FollowUps
+              items={prompts}
+              disabled={streaming || working || !editor}
+              onPick={(suggestion) => askHere(suggestion)}
+            />
           </div>
         ) : null}
-        {messages.map((message) => (
-          <div key={message.id}>
-            <div
-              className={
-                message.role === "user"
-                  ? "ml-6 rounded-xl bg-white/6 px-3 py-2 text-sm leading-6"
-                  : "border-l border-accent/50 pl-3 text-sm leading-6 text-foreground/90"
-              }
-            >
-              {message.content ? <MessageBody content={message.content} /> : streaming ? "…" : ""}
+        {shown.map((message) => {
+          const waiting = message.role === "assistant" && !message.content && (streaming || working);
+          return (
+            <div key={message.id}>
+              <div
+                className={
+                  message.role === "user"
+                    ? "ml-8 rounded-xl bg-surface-hover px-3 py-2 text-sm leading-6"
+                    : "text-sm leading-6 text-foreground"
+                }
+              >
+                {waiting ? <TypingDots /> : message.content ? <MessageBody content={message.content} /> : null}
+              </div>
+              {proposals[message.id] || overlay.proposals[message.id] ? (
+                <ProposalList
+                  proposals={(proposals[message.id] ?? overlay.proposals[message.id]).proposals}
+                  citations={(proposals[message.id] ?? overlay.proposals[message.id]).citations}
+                  editor={editor}
+                />
+              ) : null}
             </div>
-            {proposals[message.id] ? (
-              <ProposalList proposals={proposals[message.id].proposals} citations={proposals[message.id].citations} editor={editor} />
-            ) : null}
-          </div>
-        ))}
-        {error ? <p className="rounded-lg border border-[#f0a3a8]/30 bg-[#f0a3a8]/10 px-3 py-2 text-sm leading-5 text-[#f0a3a8]">{error}</p> : null}
+          );
+        })}
+        {showFollowUps ? (
+          <FollowUps items={prompts} disabled={!editor || working} onPick={(suggestion) => askHere(suggestion)} />
+        ) : null}
+        {routedTab && overlay.status ? (
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+            {overlay.status}
+          </p>
+        ) : null}
+        {routedTab && overlay.notice ? (
+          <p className="rounded-lg border border-border bg-surface-hover px-3 py-2 text-xs leading-5 text-muted-foreground">
+            {overlay.notice}
+          </p>
+        ) : null}
+        {routedTab && overlay.error ? (
+          <p className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm leading-5 text-danger">
+            {overlay.error}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm leading-5 text-danger">
+            {error}
+          </p>
+        ) : null}
       </div>
       <form
-        className="grid gap-2 border-t border-border p-3"
+        className="flex items-end gap-2 border-t border-border p-3"
         onSubmit={(event) => {
           event.preventDefault();
-          void send(draft);
+          askHere(draft);
         }}
       >
         <Textarea
           value={draft}
-          rows={2}
+          rows={1}
           placeholder={prompt}
+          aria-label={prompt}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
-              void send(draft);
+              askHere(draft);
             }
           }}
         />
-        <Button type="submit" variant="accent" disabled={streaming || !draft.trim() || !editor}>
-          {streaming ? "Thinking" : "Send"}
+        <Button type="submit" variant="accent" className="shrink-0" disabled={streaming || working || !draft.trim() || !editor}>
+          <Send className="h-3.5 w-3.5" />
+          Send
         </Button>
       </form>
     </div>
   );
 }
 
+function TypingDots() {
+  return (
+    <span className="inline-flex h-6 items-center gap-1" aria-label="The architect is responding">
+      <span className="forma-typing-dot" />
+      <span className="forma-typing-dot [animation-delay:160ms]" />
+      <span className="forma-typing-dot [animation-delay:320ms]" />
+    </span>
+  );
+}
+
+function FollowUps({
+  items,
+  disabled,
+  onPick,
+}: {
+  items: string[];
+  disabled: boolean;
+  onPick: (suggestion: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {items.map((suggestion) => (
+        <button
+          key={suggestion}
+          type="button"
+          disabled={disabled}
+          onClick={() => onPick(suggestion)}
+          className="rounded-full border border-border px-2.5 py-1 text-left text-xs leading-5 text-muted-foreground hover:border-accent/40 hover:text-foreground disabled:opacity-40"
+        >
+          {suggestion}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function suggestions(mode: ChatMode, kind: BlockKind | "global") {
+  if (mode === "engineering") {
+    return [
+      "Which documentation could we get wrong here?",
+      "What security rules must hold before we ship?",
+      "Which component carries the most engineering risk?",
+    ];
+  }
   if (mode === "market") {
     return [
       "What should we change on the pricing decision?",
@@ -245,10 +405,11 @@ function suggestions(mode: ChatMode, kind: BlockKind | "global") {
 }
 
 function emptyCopy(mode: ChatMode, block: CanvasUi["block"]) {
-  if (mode === "market") return "Ask a follow-up. A conclusion can be applied to a decision or note on the canvas.";
-  if (mode === "leads") return "Ask who to focus on. The canvas should record the customer decision, not every person.";
-  if (mode === "local" && block) return `Let's explore how ${block.props.title} should work.`;
-  return "Ask about the system as a whole. A settled decision can be written back to the canvas.";
+  if (mode === "market") return "Ask what the market finding should change on the canvas.";
+  if (mode === "leads") return "Ask who the first version is for.";
+  if (mode === "engineering") return "Ask which docs and standards the build has to respect.";
+  if (mode === "local" && block) return `Ask how ${block.props.title} should work.`;
+  return "Ask what the canvas still leaves undecided.";
 }
 
 function MessageBody({ content }: { content: string }) {

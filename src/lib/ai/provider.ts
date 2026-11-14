@@ -27,8 +27,17 @@ export type Architect = {
   streamText(request: TextRequest): Promise<AsyncGenerator<string>>;
 };
 
+export function geminiApiKey() {
+  return process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim() || "";
+}
+
+// Gemini is the default whenever it is configured. AI_PROVIDER=openai opts out of it.
+export function geminiAllowed() {
+  return requestedProvider() !== "openai";
+}
+
 export function loadArchitect(): { architect: Architect } | { error: string } {
-  const geminiKey = process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim() || "";
+  const geminiKey = geminiApiKey();
   const choice = requestedProvider();
 
   if (choice === "openai") {
@@ -96,18 +105,24 @@ function geminiArchitect(apiKey: string): Architect {
     provider: "gemini",
     async completeJson(request) {
       try {
-        const response = await client.models.generateContent({
-          model: geminiModel(),
-          contents: request.prompt,
-          config: {
-            systemInstruction: request.system,
-            temperature: request.temperature,
-            maxOutputTokens: 8192,
-            responseMimeType: "application/json",
-            responseJsonSchema: geminiJsonSchema(request.schema),
+        // Large research objects (market reports) often hit the old 8k ceiling mid-string.
+        const first = await generateJson(client, request, 16_384);
+        if (!first.truncated) return parseModelJson(request.schema, first.text);
+
+        console.error("architect json truncated", request.schemaName, first.finishReason ?? "unknown");
+        const compact = await generateJson(
+          client,
+          {
+            ...request,
+            system: [
+              request.system,
+              "Your previous answer was cut off. Keep every string under 35 words. Prefer fewer array items. Return complete valid JSON only.",
+            ].join(" "),
+            temperature: Math.min(request.temperature, 0.2),
           },
-        });
-        return parseModelJson(request.schema, response.text);
+          16_384,
+        );
+        return parseModelJson(request.schema, compact.text);
       } catch (error) {
         const message = error instanceof Error ? error.message : "";
         if (message.includes("INVALID_ARGUMENT")) {
@@ -230,6 +245,41 @@ function sanitizeJsonSchema(value: unknown): unknown {
   }
   for (const key of Object.keys(record)) record[key] = sanitizeJsonSchema(record[key]);
   return record;
+}
+
+async function generateJson(
+  client: GoogleGenAI,
+  request: JsonRequest<unknown>,
+  maxOutputTokens: number,
+): Promise<{ text: string | undefined; truncated: boolean; finishReason?: string }> {
+  const response = await client.models.generateContent({
+    model: geminiModel(),
+    contents: request.prompt,
+    config: {
+      systemInstruction: request.system,
+      temperature: request.temperature,
+      maxOutputTokens,
+      responseMimeType: "application/json",
+      responseJsonSchema: geminiJsonSchema(request.schema),
+    },
+  });
+  const finishReason = response.candidates?.[0]?.finishReason;
+  const text = response.text;
+  const truncated =
+    finishReason === "MAX_TOKENS" ||
+    (typeof text === "string" && text.length > 0 && looksTruncatedJson(text));
+  return { text, truncated, finishReason: typeof finishReason === "string" ? finishReason : undefined };
+}
+
+function looksTruncatedJson(text: string) {
+  const cleaned = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  try {
+    JSON.parse(cleaned);
+    return false;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "";
+    return /unterminated string|unexpected end|end of (?:json|data|input)/i.test(detail);
+  }
 }
 
 function parseModelJson<T>(schema: z.ZodType<T>, text: string | undefined): T {

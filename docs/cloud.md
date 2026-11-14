@@ -36,7 +36,7 @@ What each service receives as settings (see `src/lib/deploy/cloud.ts`):
 | Database | `DATABASE_URL` through a Cloud SQL socket | same |
 | Login cookie | `SESSION_SECRET`, made once and kept in `.env.cloud` | not needed |
 | AI keys | `GEMINI_*`, `OPENAI_*`, `AI_PROVIDER` from `.env.local` | same, to write the apps |
-| Other | `LIVEBLOCKS_SECRET_KEY`, `CONTEXT_DEV_API_KEY` | `DEPLOY_*` from `.env.deploy`, `GCP_PROJECT_ID`, `GCP_REGION` |
+| Other | `LIVEBLOCKS_SECRET_KEY`, `CONTEXT_DEV_API_KEY`, `PRODUCT_VIDEO_URL` | `DEPLOY_*` from `.env.deploy`, `GCP_PROJECT_ID`, `GCP_REGION` |
 
 Settings are passed to Cloud Run as environment variables from a file with owner-only access, not on the command line. Anyone with access to the Google Cloud project can read them in the console. For anything beyond a hackathon, move the keys to Secret Manager.
 
