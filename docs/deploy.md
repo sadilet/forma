@@ -1,60 +1,60 @@
-# Deploy: как из канваса получить работающий сервис
+# Deploy: turning a canvas into a running service
 
-Модуль deploy берёт канвас проекта, строит план сборки, собирает приложение и выкладывает его на Google Cloud Run. В итоге получается адрес вида `https://forma-project-slotguard-….europe-north1.run.app`.
+The deploy module takes a project's canvas, builds a build plan, assembles the app and ships it to Google Cloud Run. The result is a public address like `https://forma-project-slotguard-….europe-north1.run.app`.
 
-Сейчас можно задеплоить только демо **SlotGuard**: для него есть готовое эталонное приложение. Сборка по плану моделью (агент) пока не подключена, но место для неё готово, см. раздел «Что дальше».
+Right now only the **SlotGuard** demo can be deployed: it has a ready-made reference app. Building from the plan with a model (an agent) is not wired in yet, but the place for it is ready; see "What's next".
 
-## Как это работает
+## How it works
 
 ```
-Кнопка Deploy в воркспейсе
-  → POST /api/deploy        (канвас уходит на сервер, задача встаёт в очередь SQLite)
-  → воркер берёт задачу     (отдельный процесс: npm run deploy:worker)
-      1. plan    canvas JSON → упорядоченный список задач (src/lib/deploy/planner.ts)
-      2. build   папка приложения в data/deploy/<проект>/repo, git-коммит на каждый деплой
-      3. ship    gcloud run deploy --source …  (Cloud Build собирает образ, Cloud Run запускает)
-      4. verify  опрос <адрес>/api/health, до 8 попыток
-  → панель Deploy в UI показывает шаги, лог и адрес
+Deploy button in the workspace
+  → POST /api/deploy        (the canvas goes to the server, the job is queued in SQLite)
+  → a worker picks up the job   (separate process: npm run deploy:worker)
+      1. plan    canvas JSON → ordered task list (src/lib/deploy/planner.ts)
+      2. build   app folder in data/deploy/<project>/repo, one git commit per deploy
+      3. ship    gcloud run deploy --source …  (Cloud Build builds the image, Cloud Run runs it)
+      4. verify  poll <url>/api/health, up to 8 attempts
+  → the Deploy panel in the UI shows the steps, the log and the URL
 ```
 
-- Одновременно у проекта идёт один деплой. Повторный клик пока деплой идёт возвращает текущий.
-- Если воркер умер, задача через минуту возвращается в очередь и выполняется ещё раз (не больше двух попыток).
-- Если воркер остановили по Ctrl+C, текущий деплой возвращается в очередь без потери попытки.
-- Сервис запускается с `--max-instances 1`: SQLite эталонного приложения живёт внутри контейнера и пересоздаётся с демо-данными при каждом старте.
+- A project has at most one deploy running at a time. Clicking again while a deploy is in progress returns the current one.
+- If the worker dies, the job returns to the queue after a minute and runs again (at most two attempts).
+- If the worker is stopped with Ctrl+C, the current deploy goes back to the queue without losing an attempt.
+- The service runs with `--max-instances 1`: the reference app's SQLite lives inside the container and is recreated with demo data on every start.
 
-## Настройка для кофаундера
+## Setup for a cofounder
 
-Нужно один раз. Займёт 10–15 минут.
+One-time, takes 10–15 minutes.
 
-### 1. Установить gcloud
+### 1. Install gcloud
 
-Официальная инструкция: <https://cloud.google.com/sdk/docs/install>. Проверка: `gcloud --version`.
+Official guide: <https://cloud.google.com/sdk/docs/install>. Check with `gcloud --version`.
 
-Если распаковываете архив в папку проекта, ничего страшного: `google-cloud-sdk/` и `google-cloud-cli-*.tar.gz` уже в `.gitignore` и в игноре ESLint. Но лучше держать SDK вне проекта.
+If you unpack the archive inside the project folder, that is fine: `google-cloud-sdk/` and `google-cloud-cli-*.tar.gz` are already in `.gitignore` and in the ESLint ignores. Still, it is better to keep the SDK outside the project.
 
-### 2. Войти и выбрать проект
+### 2. Sign in and pick the project
 
 ```bash
 gcloud auth login
 gcloud config set project junction26hel-7607
 ```
 
-Это лабораторный проект хакатона. Как получить к нему доступ, зависит от того, как он выдан:
+This is the hackathon lab project. How you get access depends on how it was issued:
 
-- если у вас есть данные входа того же лабораторного аккаунта, достаточно `gcloud auth login` под ним;
-- права в проекте выдают организаторы: у лабораторного пользователя нет права менять IAM (`setIamPolicy`), сервис-аккаунты и ключи создавать тоже нельзя, это запрещено политикой организации;
-- запасной вариант: свой проект Google Cloud (есть бесплатный стартовый кредит). Тогда нужно включить API (шаг 3) и указать свой `GCP_PROJECT_ID`.
+- if you have the credentials of the same lab account, `gcloud auth login` with it is enough;
+- permissions in the project are granted by the organizers: the lab user cannot change IAM (`setIamPolicy`), and creating service accounts and keys is also forbidden by organization policy;
+- fallback: your own Google Cloud project (there is a free starter credit). Then enable the APIs (step 3) and set your own `GCP_PROJECT_ID`.
 
-Нужны права минимум на Cloud Run (`run.admin`), Cloud Build и Artifact Registry. В лабораторном проекте у пользователя роль `editor` плюс `run.admin`, и этого хватает.
+You need at least rights on Cloud Run (`run.admin`), Cloud Build and Artifact Registry. In the lab project the user has the `editor` role plus `run.admin`, which is enough.
 
-### 3. Включить API (в лабораторном проекте уже включены)
+### 3. Enable the APIs (already enabled in the lab project)
 
 ```bash
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com \
   artifactregistry.googleapis.com storage.googleapis.com
 ```
 
-### 4. Проверить, что деплой вообще возможен
+### 4. Check that deploying is possible at all
 
 ```bash
 gcloud run deploy hello \
@@ -62,71 +62,71 @@ gcloud run deploy hello \
   --region=europe-north1 --allow-unauthenticated
 ```
 
-Откройте выданный адрес в окне инкогнито. Если страница открылась, удалите сервис: `gcloud run services delete hello --region europe-north1`.
+Open the returned address in an incognito window. If the page opens, delete the service: `gcloud run services delete hello --region europe-north1`.
 
-Если адрес отвечает 403, организация запрещает публичный доступ. Тогда в `.env.deploy` поставьте `DEPLOY_PUBLIC_ACCESS=no-invoker-iam-check`.
+If the address answers 403, the organization forbids public access. In that case set `DEPLOY_PUBLIC_ACCESS=no-invoker-iam-check` in `.env.deploy`.
 
-### 5. Настроить Forma
+### 5. Configure Forma
 
 ```bash
 cp .env.deploy.example .env.deploy
 ```
 
-В `.env.deploy` заполните `GCP_PROJECT_ID` (ID проекта, не имя и не номер). Остальное можно оставить как есть.
+In `.env.deploy` fill in `GCP_PROJECT_ID` (the project ID, not the name or the number). Everything else can stay as it is.
 
-### 6. Запустить
+### 6. Run
 
-В двух терминалах:
+In two terminals:
 
 ```bash
-npm run dev              # приложение
-npm run deploy:worker    # воркер: без него задачи остаются в очереди
+npm run dev              # the app
+npm run deploy:worker    # the worker: without it jobs stay in the queue
 ```
 
-Откройте воркспейс SlotGuard, справа сверху кнопка **Deploy**. Первая сборка занимает несколько минут, потом около минуты.
+Open the SlotGuard workspace; the **Deploy** button is at the top right. The first build takes a few minutes, later ones about a minute.
 
-Чтобы проверить весь конвейер без Google, поставьте `DEPLOY_DRY_RUN=1` в `.env.deploy`: план и папка приложения создаются, облако не вызывается.
+To check the whole pipeline without Google, set `DEPLOY_DRY_RUN=1` in `.env.deploy`: the plan and the app folder are created, the cloud is not called.
 
-## Что где лежит и как не мешать друг другу
+## What lives where, and how not to step on each other
 
-Весь модуль живёт в новых папках. Существующий код тронут минимально:
+The whole module lives in new folders. Existing code is touched minimally:
 
-| Где | Что |
+| Where | What |
 | --- | --- |
-| `src/lib/deploy/` | вся логика: план, очередь, воркер, `gcloud`, сборка папки |
-| `src/app/api/deploy/route.ts` | `POST` ставит деплой в очередь, `GET` отдаёт статус и лог |
-| `src/components/deploy/deploy-dock.tsx` | кнопка и панель |
-| `scripts/deploy-worker.ts` | точка входа воркера |
-| `deploy-templates/slotguard/` | эталонное приложение SlotGuard и его Dockerfile |
-| `data/deploy/` | собранные репозитории проектов (в `.gitignore`) |
+| `src/lib/deploy/` | all the logic: plan, queue, worker, `gcloud`, app folder build |
+| `src/app/api/deploy/route.ts` | `POST` queues a deploy, `GET` returns status and log |
+| `src/components/deploy/deploy-dock.tsx` | the button and the panel |
+| `scripts/deploy-worker.ts` | worker entry point |
+| `deploy-templates/slotguard/` | the SlotGuard reference app and its Dockerfile |
+| `data/deploy/` | built project repositories (in `.gitignore`) |
 
-Точки соприкосновения с остальным кодом:
+Points where it touches the rest of the code:
 
-- `src/components/workspace/workspace.tsx`: один импорт и одна строка `<DeployDock … />`;
-- `package.json`: скрипты `deploy:worker` и `test:deploy`;
-- `eslint.config.mjs` и `.gitignore`: игнор папок `deploy-templates`, `google-cloud-sdk`, `data`;
-- общая БД `data/forma.db`: модуль создаёт свои таблицы `deploy_jobs` и `deploy_events`, схему приложения (`db/schema.ts`) не трогает.
+- `src/components/workspace/workspace.tsx`: one import and one `<DeployDock … />` line;
+- `package.json`: the `deploy:worker` and `test:deploy` scripts;
+- `eslint.config.mjs` and `.gitignore`: ignore the `deploy-templates`, `google-cloud-sdk` and `data` folders;
+- the shared database `data/forma.db`: the module creates its own tables `deploy_jobs` and `deploy_events` and does not touch the app schema (`db/schema.ts`).
 
-Маршруты deploy лежат в `/api/deploy`, а не в `/api/build`: там уже есть `grounding`.
+The deploy routes live under `/api/deploy`, not `/api/build`: that path already holds `grounding`.
 
-Тесты: `npm run test:deploy`.
+Tests: `npm run test:deploy`.
 
-## Если что-то не работает
+## Troubleshooting
 
-| Симптом | Причина и что делать |
+| Symptom | Cause and what to do |
 | --- | --- |
-| В панели «Waiting for the deploy worker» | воркер не запущен: `npm run deploy:worker` |
-| `"gcloud" was not found` | gcloud не в PATH. Либо установите, либо задайте `GCLOUD_BIN=/полный/путь/к/gcloud` |
-| `PERMISSION_DENIED` или «API not enabled» | не включён API или нет прав в проекте, см. шаги 2–3 |
-| Деплой прошёл, адрес отвечает 403 | `DEPLOY_PUBLIC_ACCESS=no-invoker-iam-check` |
-| «Build failed» | в логе будет ссылка на Cloud Build, там полный журнал сборки |
-| `/api/deploy` отвечает 422 «Only the SlotGuard demo…» | проект не SlotGuard, либо dev-сервер давно запущен и держит устаревший код: перезапустите `npm run dev` |
-| `SqliteError: disk I/O error` | не открывайте `data/forma.db` сторонними программами, пока работает dev-сервер: они могут удалить его журнал `-wal`/`-shm`. Остановите сервер через Ctrl+C и запустите снова |
+| The panel says "Waiting for the deploy worker" | the worker is not running: `npm run deploy:worker` |
+| `"gcloud" was not found` | gcloud is not in PATH. Either install it or set `GCLOUD_BIN=/full/path/to/gcloud` |
+| `PERMISSION_DENIED` or "API not enabled" | an API is not enabled or you lack rights in the project, see steps 2–3 |
+| The deploy succeeded but the address answers 403 | `DEPLOY_PUBLIC_ACCESS=no-invoker-iam-check` |
+| "Build failed" | the log contains a Cloud Build link with the full build journal |
+| `/api/deploy` answers 422 "Only the SlotGuard demo…" | the project is not SlotGuard, or the dev server has been running for a long time and holds stale code: restart `npm run dev` |
+| `SqliteError: disk I/O error` | do not open `data/forma.db` with outside programs while the dev server is running: they can delete its `-wal`/`-shm` journal. Stop the server with Ctrl+C and start it again |
 
-## Что дальше
+## What's next
 
-- **Сборка агентом.** Сейчас шаг `build` копирует готовое приложение. Агент, который пишет приложение по плану из `planner.ts`, подключается в `src/lib/deploy/build.ts`: он получает ту же папку и должен оставить в ней приложение с `Dockerfile`, который слушает `$PORT` и отвечает на `/api/health`.
-- **Откат.** Cloud Run хранит ревизии, откат это переключение трафика на предыдущую. Ревизия каждого деплоя записана в `deploy_jobs.revision`.
-- **Entire.** Репозиторий проекта уже лежит в `data/deploy/<проект>/repo` с коммитом на каждый деплой. Отправка в Entire это необязательный шаг после сборки, на деплой он не влияет.
-- **Вход владельца.** В эталонном SlotGuard дашборд открыт без логина, это демо. Оплата депозита тестовая: деньги не списываются.
-- **Стоимость.** При `DEPLOY_MIN_INSTANCES=0` сервис ничего не стоит в простое, но первый заход после паузы ждёт 5–10 секунд. Перед показом можно поставить `1`.
+- **Agent build.** Right now the `build` step copies the ready-made app. An agent that writes the app from the plan in `planner.ts` plugs into `src/lib/deploy/build.ts`: it gets the same folder and must leave an app in it with a `Dockerfile` that listens on `$PORT` and answers on `/api/health`.
+- **Rollback.** Cloud Run keeps revisions; a rollback is switching traffic to the previous one. Each deploy's revision is recorded in `deploy_jobs.revision`.
+- **Entire.** The project repository already lives in `data/deploy/<project>/repo` with a commit per deploy. Pushing to Entire is an optional step after the build and does not affect the deploy.
+- **Owner login.** In the reference SlotGuard the dashboard is open without a login; this is a demo. Deposit payment is mocked: no money is charged.
+- **Cost.** With `DEPLOY_MIN_INSTANCES=0` the service costs nothing while idle, but the first visit after a pause waits 5–10 seconds. Before a demo you can set it to `1`.
