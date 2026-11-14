@@ -15,6 +15,7 @@ import "@/lib/liveblocks.config";
 import { FormaBlockShapeUtil } from "@/lib/canvas/forma-block-util";
 import { isFormaBlock, type FormaBlockShape } from "@/lib/canvas/forma-block-view";
 import { canvasNeedsMeetingsSeed, seedMeetings } from "@/lib/canvas/meetings";
+import { canvasNeedsSlotguardSeed, seedSlotguard } from "@/lib/canvas/slotguard";
 import { canvasNeedsTaskflowSeed, seedTaskflow } from "@/lib/canvas/taskflow";
 import { useStorageStore } from "@/lib/canvas/use-storage-store";
 import type { SessionUser } from "@/lib/auth";
@@ -25,12 +26,13 @@ const SHAPE_UTILS = [FormaBlockShapeUtil];
 const TEMPLATE_SEEDS = {
   taskflow: { needsSeed: canvasNeedsTaskflowSeed, seed: seedTaskflow },
   meetings: { needsSeed: canvasNeedsMeetingsSeed, seed: seedMeetings },
+  slotguard: { needsSeed: canvasNeedsSlotguardSeed, seed: seedSlotguard },
 } as const;
 
 type SeededTemplate = keyof typeof TEMPLATE_SEEDS;
 
 function seededTemplate(template: ProjectRecord["template"]): SeededTemplate | null {
-  return template === "taskflow" || template === "meetings" ? template : null;
+  return template in TEMPLATE_SEEDS ? (template as SeededTemplate) : null;
 }
 
 const CANVAS_COMPONENTS: TLComponents = {
@@ -243,7 +245,11 @@ async function seedSharedTemplate(
   if (!room) return;
   const { needsSeed, seed } = TEMPLATE_SEEDS[template];
   await new Promise((resolve) => window.setTimeout(resolve, 400));
-  if (!needsSeed(editor)) return;
+  if (!needsSeed(editor)) {
+    // The camera is local to each client, so a demo canvas that is already seeded opens at 100%. Fit it instead.
+    if (editor.getCurrentPageShapeIds().size > 0) editor.zoomToFit({ animation: { duration: 0 } });
+    return;
+  }
   const { root } = await room.getStorage();
   const selfId = room.getSelf()?.connectionId ?? 0;
   const leader = Math.min(selfId, ...room.getOthers().map((other) => other.connectionId));

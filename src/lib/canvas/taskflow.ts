@@ -145,7 +145,16 @@ export function seedTaskflow(editor: Editor) {
   editor.selectNone();
 }
 
-export function connect(editor: Editor, fromId: TLShapeId, toId: TLShapeId, label: string) {
+type Anchor = { x: number; y: number };
+
+// `anchors` moves an arrow's end points along the block edge, so arrows that share a side stay apart.
+export function connect(
+  editor: Editor,
+  fromId: TLShapeId,
+  toId: TLShapeId,
+  label: string,
+  anchors?: { start?: Anchor; end?: Anchor },
+) {
   const from = editor.getShapePageBounds(fromId);
   const to = editor.getShapePageBounds(toId);
   if (!from || !to) return;
@@ -178,7 +187,7 @@ export function connect(editor: Editor, fromId: TLShapeId, toId: TLShapeId, labe
       props: {
         ...bindingBase,
         terminal: "start",
-        normalizedAnchor: anchorBetween(from, to),
+        normalizedAnchor: anchors?.start ?? anchorBetween(from, to),
       },
     },
     {
@@ -189,7 +198,7 @@ export function connect(editor: Editor, fromId: TLShapeId, toId: TLShapeId, labe
       props: {
         ...bindingBase,
         terminal: "end",
-        normalizedAnchor: anchorBetween(to, from),
+        normalizedAnchor: anchors?.end ?? anchorBetween(to, from),
       },
     },
   ]);

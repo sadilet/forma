@@ -11,6 +11,8 @@ import { projects, specifications, users } from "@/lib/db/schema";
 import {
   MEETINGS_GOAL,
   MEETINGS_PROJECT_ID,
+  SLOTGUARD_GOAL,
+  SLOTGUARD_PROJECT_ID,
   TASKFLOW_BLOCKS,
   TASKFLOW_GOAL,
   TASKFLOW_PROJECT_ID,
@@ -139,7 +141,33 @@ export function readyDb() {
   `);
   seedDemo();
   seedMeetingsDemo();
+  seedSlotguardDemo();
   ready = true;
+}
+
+// SlotGuard is the main demo product (docs/demo_product.md). It is listed first on the home page.
+function seedSlotguardDemo() {
+  const owner = db.select({ id: users.id }).from(users).where(eq(users.id, "user-alex")).get();
+  if (!owner) return;
+
+  const existing = db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(eq(projects.id, SLOTGUARD_PROJECT_ID))
+    .get();
+  if (existing) return;
+
+  db.insert(projects)
+    .values({
+      id: SLOTGUARD_PROJECT_ID,
+      name: "SlotGuard",
+      ownerId: owner.id,
+      roomId: "forma-project-slotguard",
+      template: "slotguard",
+      goal: SLOTGUARD_GOAL,
+      createdAt: Date.now() + 2,
+    })
+    .run();
 }
 
 // The first draft of this sample used a room that still holds blocks of a kind that no longer exists.

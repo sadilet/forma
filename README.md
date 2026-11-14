@@ -9,7 +9,8 @@ Forma is a collaborative workspace for designing software on an infinite canvas.
 - AI Architect for the whole canvas: missing requirements, incomplete flows, and questions to discuss
 - AI Explorer for the selected block, with streaming answers
 - Specifications saved in SQLite, including AI proposals that stay unsaved until someone applies them
-- Two demo canvases, TaskFlow and Meeting Notes, plus blank workspaces
+- Three demo canvases (SlotGuard, TaskFlow, Meeting Notes) plus blank workspaces
+- Deploy: a worker builds the SlotGuard demo and puts it online on Google Cloud Run. See [docs/deploy.md](docs/deploy.md)
 
 ## Requirements
 

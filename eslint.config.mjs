@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Reference apps that deploy ships as they are, and the Google Cloud CLI when it is unpacked here.
+    "deploy-templates/**",
+    "google-cloud-sdk/**",
+    // Generated project repos and the database. Deploy copies the reference apps into data/deploy.
+    "data/**",
   ]),
 ]);
 

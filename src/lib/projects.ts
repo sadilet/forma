@@ -24,7 +24,10 @@ function toProject(row: typeof projects.$inferSelect): ProjectRecord {
     name: row.name,
     ownerId: row.ownerId,
     roomId: row.roomId,
-    template: row.template === "taskflow" || row.template === "meetings" ? row.template : "blank",
+    template:
+      row.template === "taskflow" || row.template === "meetings" || row.template === "slotguard"
+        ? row.template
+        : "blank",
     goal: row.goal,
     createdAt: row.createdAt,
   };

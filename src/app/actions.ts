@@ -5,7 +5,13 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { clearSession, getCurrentUser, setSession } from "@/lib/auth";
 import { getUserByEmail } from "@/lib/db";
-import { MEETINGS_GOAL, PROJECT_TEMPLATES, TASKFLOW_GOAL, type ProjectTemplate } from "@/lib/canvas/kinds";
+import {
+  MEETINGS_GOAL,
+  PROJECT_TEMPLATES,
+  SLOTGUARD_GOAL,
+  TASKFLOW_GOAL,
+  type ProjectTemplate,
+} from "@/lib/canvas/kinds";
 import { publishResourceUpdate } from "@/lib/collab/broadcast";
 import { compareAndSet } from "@/lib/collab/draft";
 import { createProjectRecord, getProject, updateProjectRecord } from "@/lib/projects";
@@ -44,6 +50,7 @@ const TEMPLATE_GOALS: Record<ProjectTemplate, string> = {
   blank: "",
   taskflow: TASKFLOW_GOAL,
   meetings: MEETINGS_GOAL,
+  slotguard: SLOTGUARD_GOAL,
 };
 
 export async function createProject(input: { name: string; template: ProjectTemplate }) {

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import type { Editor } from "tldraw";
+import { DeployDock } from "@/components/deploy/deploy-dock";
 import { TooltipProvider } from "@/components/ui";
 import { AiSidebar } from "@/components/workspace/ai-sidebar";
 import { CollabBridge } from "@/components/workspace/collab-bridge";
@@ -110,6 +111,7 @@ function WorkspaceFrame({
               onEditor={setEditor}
             />
             <LeftToolbar editor={editor} ui={ui} />
+            <DeployDock editor={editor} project={project} />
             <BottomBar
               editor={editor}
               ui={ui}
